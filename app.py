@@ -39,9 +39,16 @@ for fit_file in fit_files:
     })
 
 df = pd.DataFrame(rows)
-
-output = create_excel_report(df, "Reports/Week_Data.xlsx")
-
+summary = {
+    "athlete": "Brady Eagar",
+    "team": "Utah Tech XC",
+    "week": f"{df['Date'].min()} to {df['Date'].max()}",
+}
+output = create_excel_report(
+    df,
+    summary,
+    "Reports/Week_Data.xlsx",
+)
 print("\n================================")
 print(" Weekly Report Created!")
 print("================================")
