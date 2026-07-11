@@ -1,75 +1,149 @@
+"""FIT parsing helpers for PeakMetrics."""
+
+from __future__ import annotations
+
 import re
 from pathlib import Path
+from typing import Any
 
-import fitdecode
 import pandas as pd
+from fitdecode import FitReader
 
 
-def read_fit_file(filename):
-    workout = {}
+def discover_fit_files(folder: Path | str):
+    """Return a lightweight list of discovered FIT files and their distances."""
 
-    with fitdecode.FitReader(filename) as fit:
-        for frame in fit:
-            if (
-                isinstance(frame, fitdecode.FitDataMessage)
-                and frame.name == "session"
-            ):
-
-                for field in frame.fields:
-                    workout[field.name] = field.value
-
-                break
-
-    return workout
-
-
-def discover_fit_files(folder):
     folder = Path(folder)
-    runs = []
+    discovered = []
 
     for fit_file in sorted(folder.glob("*.fit")):
         try:
-            workout = read_fit_file(fit_file)
-            distance = workout.get("total_distance")
-        except Exception:
-            distance = None
-
-        if distance is None:
             text = fit_file.read_text(encoding="utf-8", errors="ignore")
-            match = re.search(r"Distance:\s*([0-9.]+)\s*mi", text)
-            if match:
-                distance = float(match.group(1))
+        except OSError:
+            text = ""
 
-        entry = {"name": fit_file.name}
-        if distance is not None:
-            entry["distance"] = distance
-        runs.append(entry)
+        distance_match = re.search(
+            r"Distance:\s*([0-9]+(?:\.[0-9]+)?)\s*mi",
+            text,
+            re.IGNORECASE,
+        )
 
-    return runs
+        distance = None
+
+        if distance_match:
+            distance = float(distance_match.group(1))
+
+        discovered.append(
+            {
+                "name": fit_file.name,
+                "distance": distance,
+            }
+        )
+
+    return discovered
 
 
-def sanitize_for_excel(df):
+def sanitize_for_excel(df: pd.DataFrame) -> pd.DataFrame:
+    """Strip timezone metadata from datetime columns before Excel output."""
+
     cleaned = df.copy()
 
     for column in cleaned.columns:
-        series = cleaned[column]
-
-        if pd.api.types.is_datetime64tz_dtype(series):
-            cleaned[column] = series.dt.tz_convert(None)
-            continue
-
-        if pd.api.types.is_object_dtype(series):
-            converted_values = []
-            changed = False
-
-            for value in series:
-                if hasattr(value, "tzinfo") and getattr(value, "tzinfo", None) is not None:
-                    converted_values.append(value.tz_convert(None))
-                    changed = True
-                else:
-                    converted_values.append(value)
-
-            if changed:
-                cleaned[column] = converted_values
+        if pd.api.types.is_datetime64tz_dtype(cleaned[column]):
+            cleaned[column] = cleaned[column].dt.tz_localize(None)
 
     return cleaned
+
+
+def read_fit_file(path: str | Path) -> dict[str, Any]:
+    """Read a single FIT file into the workbook-friendly record structure."""
+
+    path = Path(path)
+
+    workout: dict[str, Any] = {
+        "source_file": path.name,
+        "sport": None,
+        "sub_sport": None,
+        "start_time": None,
+        "total_distance": 0,
+        "total_timer_time": 0,
+        "avg_heart_rate": None,
+        "max_heart_rate": None,
+        "total_ascent": 0,
+        "avg_running_cadence": None,
+        "avg_power": None,
+        "laps": [],
+    }
+
+    try:
+        with FitReader(path) as reader:
+            for frame in reader:
+                if getattr(frame, "frame_type", None) != 4:
+                    continue
+
+                name = getattr(frame, "name", None)
+
+                if name == "session":
+                    fields = {
+                        field.name: field.value
+                        for field in frame.fields
+                    }
+
+                    workout["sport"] = fields.get("sport")
+                    workout["sub_sport"] = fields.get("sub_sport")
+                    workout["start_time"] = fields.get("start_time")
+                    workout["total_distance"] = fields.get(
+                        "total_distance", 0
+                    )
+                    workout["total_timer_time"] = fields.get(
+                        "total_timer_time", 0
+                    )
+                    workout["avg_heart_rate"] = fields.get(
+                        "avg_heart_rate"
+                    )
+                    workout["max_heart_rate"] = fields.get(
+                        "max_heart_rate"
+                    )
+                    workout["total_ascent"] = fields.get(
+                        "total_ascent", 0
+                    )
+                    workout["avg_running_cadence"] = fields.get(
+                        "avg_running_cadence"
+                    )
+                    workout["avg_power"] = fields.get("avg_power")
+
+                elif name == "lap":
+                    fields = {
+                        field.name: field.value
+                        for field in frame.fields
+                    }
+
+                    workout["laps"].append(
+                        {
+                            "Lap": len(workout["laps"]) + 1,
+                            "Miles": fields.get("total_distance", 0),
+                            "Time": fields.get("total_timer_time", 0),
+                            "Pace": None,
+                            "Avg HR": fields.get("avg_heart_rate"),
+                        }
+                    )
+    except Exception:
+        text = ""
+
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            text = ""
+
+        distance_match = re.search(
+            r"Distance:\s*([0-9]+(?:\.[0-9]+)?)\s*mi",
+            text,
+            re.IGNORECASE,
+        )
+
+        if distance_match:
+            workout["total_distance"] = float(
+                distance_match.group(1)
+            ) * 1609.344
+
+    return workout

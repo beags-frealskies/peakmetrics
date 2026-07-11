@@ -1,19 +1,20 @@
 """Excel report generation helpers."""
 
+from datetime import datetime
 from pathlib import Path
 
-from openpyxl import load_workbook
-from openpyxl.styles import (
-    Font,
-    PatternFill,
-    Alignment,
-    Border,
-    Side,
-)
+from openpyxl import Workbook
+from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.label import DataLabelList
+from openpyxl.styles import Alignment, Font
+from openpyxl.utils import get_column_letter
+
+from dashboard import draw_metric_card
+from run_cards import create_report_sheet
 
 
 def build_output_path(output_path):
-    """Return a writable Excel output path, avoiding collisions."""
+    """Return a writable path without overwriting an existing report."""
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -22,54 +23,28 @@ def build_output_path(output_path):
         return path
 
     counter = 1
+
     while True:
         candidate = path.parent / f"{path.stem}_{counter}{path.suffix}"
+
         if not candidate.exists():
             return candidate
+
         counter += 1
 
 
-def style_daily_runs_sheet(ws):
-    """Apply formatting to the Daily Runs worksheet."""
+def create_summary_sheet(wb, df, summary):
+    """Create the weekly dashboard."""
 
-    blue = PatternFill(fill_type="solid", fgColor="2F75B5")
-    white = Font(color="FFFFFF", bold=True)
-
-    ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
-
-    for cell in ws[1]:
-        cell.fill = blue
-        cell.font = white
-        cell.alignment = Alignment(horizontal="center")
-
-    for row in ws.iter_rows():
-        for cell in row:
-            cell.alignment = Alignment(horizontal="center")
-
-    for column in ws.columns:
-        width = max(
-            len(str(cell.value)) if cell.value is not None else 0
-            for cell in column
-        )
-
-        ws.column_dimensions[column[0].column_letter].width = width + 3
-
-
-def create_summary_sheet(wb, df):
-    """Create the Summary worksheet."""
-
-    ws = wb.create_sheet("Summary", 0)
-
-    # ----------------------------
-    # Report Header
-    # ----------------------------
+    ws = wb.active
+    ws.title = "Summary"
+    ws.sheet_view.showGridLines = False
 
     ws["A1"] = "PeakMetrics"
     ws["A1"].font = Font(size=26, bold=True)
 
     ws["A2"] = "Weekly Training Report"
-    ws["A2"].font = Font(size=15)
+    ws["A2"].font = Font(size=15, color="667085")
 
     ws["A4"] = "Athlete"
     ws["B4"] = "Brady Eagar"
@@ -77,105 +52,109 @@ def create_summary_sheet(wb, df):
     ws["A5"] = "Team"
     ws["B5"] = "Utah Tech XC"
 
-    ws["A6"] = "Week"
-
     dates = sorted(df["Date"])
-    ws["B6"] = f"{dates[0]}  →  {dates[-1]}"
 
-    # Statistics
-    total_runs = len(df)
-    total_miles = df["Miles"].sum()
-    total_time_seconds = 0
+    ws["A6"] = "Week"
+    ws["B6"] = f"{dates[0]} → {dates[-1]}"
 
-    for t in df["Time"]:
-        h, m, s = map(int, t.split(":"))
-        total_time_seconds += h * 3600 + m * 60 + s
+    for cell in ("A4", "A5", "A6"):
+        ws[cell].font = Font(bold=True)
 
-    hours = total_time_seconds // 3600
-    mins = (total_time_seconds % 3600) // 60
+    draw_metric_card(
+        ws, 9, 1, "Weekly Mileage", f"{summary.mileage:.1f} mi"
+    )
+    draw_metric_card(
+        ws, 9, 5, "Average HR", f"{summary.average_hr} bpm"
+    )
+    draw_metric_card(
+        ws, 9, 9, "Average Power", f"{summary.average_power} W"
+    )
 
-    weekly_time = f"{hours}h {mins}m"
+    draw_metric_card(ws, 14, 1, "Runs", summary.runs)
+    draw_metric_card(ws, 14, 5, "Max HR", f"{summary.max_hr} bpm")
+    draw_metric_card(
+        ws, 14, 9, "Elevation", f"{summary.elevation_gain:,} ft"
+    )
 
-    avg_hr = round(df["Avg HR"].mean())
-    max_hr = df["Max HR"].max()
+    draw_metric_card(ws, 19, 1, "Weekly Time", summary.weekly_time)
+    draw_metric_card(ws, 19, 5, "Average Pace", summary.average_pace)
 
-    avg_seconds = total_time_seconds / total_miles if total_miles else 0
+    for column in range(1, 13):
+        ws.column_dimensions[get_column_letter(column)].width = 11
 
-    pace_minutes = int(avg_seconds // 60)
-    pace_seconds = int(avg_seconds % 60)
 
-    average_pace = f"{pace_minutes}:{pace_seconds:02d} /mi"
+def friendly_day(value) -> str:
+    """Convert an ISO date into a short weekday label."""
 
-    total_elevation = round(df["Elevation (ft)"].sum())
+    try:
+        return datetime.fromisoformat(str(value)).strftime("%a")
+    except ValueError:
+        return str(value)
 
-    avg_power = round(df["Power (W)"].mean())
 
-    stats = [
-        ("Runs", total_runs),
-        ("Total Mileage", f"{total_miles:.2f} mi"),
-        ("Average HR", f"{avg_hr} bpm"),
-        ("Maximum HR", f"{max_hr} bpm"),
-        ("Elevation Gain", f"{total_elevation:,} ft"),
-        ("Average Power", f"{avg_power} W"),
-    ]
+def add_mileage_chart(ws, daily_mileage):
+    """Add daily mileage totals, combining double runs by date."""
 
-    def draw_metric_card(ws, row, col, title, value, color):
-        """Draw one dashboard metric card."""
+    data_start_row = 26
+    data_column = 14
 
-        fill = PatternFill(fill_type="solid", fgColor=color)
+    ws.cell(data_start_row, data_column).value = "Day"
+    ws.cell(data_start_row, data_column + 1).value = "Miles"
 
-        border = Border(
-            left=Side(style="medium"),
-            right=Side(style="medium"),
-            top=Side(style="medium"),
-            bottom=Side(style="medium"),
-        )
+    for index, row in enumerate(
+        daily_mileage.itertuples(),
+        start=data_start_row + 1,
+    ):
+        ws.cell(index, data_column).value = friendly_day(row.Date)
+        ws.cell(index, data_column + 1).value = float(row.Miles)
 
-        ws.merge_cells(
-            start_row=row,
-            start_column=col,
-            end_row=row + 3,
-            end_column=col + 2,
-        )
+    chart = BarChart()
+    chart.type = "col"
+    chart.style = 10
+    chart.title = "Daily Mileage"
+    chart.y_axis.title = "Miles"
+    chart.x_axis.title = None
+    chart.legend = None
 
-        cell = ws.cell(row=row, column=col)
+    data = Reference(
+        ws,
+        min_col=data_column + 1,
+        min_row=data_start_row,
+        max_row=data_start_row + len(daily_mileage),
+    )
 
-        cell.value = f"{value}\n\n{title}"
+    categories = Reference(
+        ws,
+        min_col=data_column,
+        min_row=data_start_row + 1,
+        max_row=data_start_row + len(daily_mileage),
+    )
 
-        cell.alignment = Alignment(
-            horizontal="center",
-            vertical="center",
-            wrap_text=True,
-        )
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(categories)
 
-        cell.fill = fill
+    chart.height = 7
+    chart.width = 15
 
-        cell.font = Font(
-            size=22,
-            bold=True,
-            color="FFFFFF",
-        )
+    chart.dLbls = DataLabelList()
+    chart.dLbls.showVal = True
 
-        for r in range(row, row + 4):
-            for c in range(col, col + 2 + 1):
-                ws.cell(r, c).fill = fill
-                ws.cell(r, c).border = border
+    ws.add_chart(chart, "A25")
 
-def create_excel_report(df, summary, output_path):
-    """Create the complete Excel workbook."""
+    ws.column_dimensions["N"].hidden = True
+    ws.column_dimensions["O"].hidden = True
+
+
+def create_excel_report(df, summary, daily_mileage, output_path):
+    """Create the complete PeakMetrics workbook."""
 
     output_path = build_output_path(output_path)
 
-    # Write Daily Runs sheet
-    df.to_excel(output_path, sheet_name="Daily Runs", index=False)
+    wb = Workbook()
 
-    wb = load_workbook(output_path)
-
-    # Create Summary sheet
-    create_summary_sheet(wb, df)
-
-    # Format Daily Runs
-    style_daily_runs_sheet(wb["Daily Runs"])
+    create_summary_sheet(wb, df, summary)
+    add_mileage_chart(wb["Summary"], daily_mileage)
+    create_report_sheet(wb, df)
 
     wb.save(output_path)
 
