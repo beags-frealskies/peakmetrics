@@ -3,19 +3,6 @@
 import math
 
 
-# Use the exact FIT filename when PeakMetrics guesses incorrectly.
-#
-# Example:
-#
-# RUN_TYPE_OVERRIDES = {
-#     "Morning_Strength.fit": "Core",
-#     "Afternoon_Strength.fit": "Lifting",
-#     "Friday_Run.fit": "Easy Run",
-# }
-#
-RUN_TYPE_OVERRIDES = {}
-
-
 RUNNING_WORDS = (
     "running",
     "run",
@@ -91,11 +78,13 @@ def normalize_activity_text(run):
 
 
 def is_running_activity(run):
-    """Return True when an activity should count as running."""
+    """Return True when an activity counts as running."""
 
-    activity_text = normalize_activity_text(run)
+    activity_text = normalize_activity_text(
+        run
+    )
 
-    # Older FIT files may not contain sport information.
+    # Older FIT files may not contain sport data.
     if not activity_text:
         return True
 
@@ -108,7 +97,9 @@ def is_running_activity(run):
 def classify_non_running_activity(run):
     """Classify activities that are not runs."""
 
-    activity_text = normalize_activity_text(run)
+    activity_text = normalize_activity_text(
+        run
+    )
 
     if not activity_text:
         return None
@@ -150,7 +141,6 @@ def time_to_seconds(value):
             int(float(part))
             for part in parts
         ]
-
     except ValueError:
         return None
 
@@ -191,7 +181,6 @@ def pace_to_seconds(value):
     try:
         minutes = int(parts[0])
         seconds = int(float(parts[1]))
-
     except ValueError:
         return None
 
@@ -199,7 +188,7 @@ def pace_to_seconds(value):
 
 
 def calculate_run_pace(run):
-    """Calculate the full activity pace in seconds per mile."""
+    """Calculate full activity pace in seconds per mile."""
 
     miles = safe_float(
         run.get("Miles")
@@ -249,10 +238,9 @@ def has_stride_pattern(run, overall_pace):
         ):
             continue
 
-        # A stride must be clearly faster than the
-        # average pace of the full activity.
         is_fast = (
-            lap_pace <= overall_pace - 40
+            lap_pace
+            <= overall_pace - 40
         )
 
         if not is_fast:
@@ -275,15 +263,17 @@ def has_stride_pattern(run, overall_pace):
 
 def has_workout_lap(run, weekly_pace):
     """
-    Detect a workout when any lap is at least
-    45 seconds per mile faster than weekly pace.
+    Detect a workout when at least one lap is:
+
+    1. At least 60 seconds per mile faster than weekly pace.
+    2. At least 0.10 miles long.
     """
 
     if weekly_pace is None:
         return False
 
     workout_pace_cutoff = (
-        weekly_pace - 45
+        weekly_pace - 60
     )
 
     for lap in run.get("Laps") or []:
@@ -291,7 +281,15 @@ def has_workout_lap(run, weekly_pace):
             lap.get("Pace")
         )
 
-        if lap_pace is None:
+        lap_miles = safe_float(
+            lap.get("Miles"),
+            0,
+        )
+
+        if (
+            lap_pace is None
+            or lap_miles < 0.10
+        ):
             continue
 
         if lap_pace <= workout_pace_cutoff:
@@ -300,10 +298,16 @@ def has_workout_lap(run, weekly_pace):
     return False
 
 
-def classify_runs(df, summary):
+def classify_runs(
+    df,
+    summary,
+    overrides=None,
+):
     """Assign a training category to every activity."""
 
     result = df.copy()
+
+    overrides = overrides or {}
 
     weekly_miles = max(
         safe_float(
@@ -341,7 +345,10 @@ def classify_runs(df, summary):
         longest_run_index = max(
             running_indices,
             key=lambda index: safe_float(
-                result.loc[index, "Miles"],
+                result.loc[
+                    index,
+                    "Miles",
+                ],
                 0,
             ),
         )
@@ -355,19 +362,24 @@ def classify_runs(df, summary):
 
     for index, run in result.iterrows():
         source_file = str(
-            run.get("Source File", "")
+            run.get(
+                "Source File",
+                "",
+            )
         )
 
-        # Manual override always has first priority.
-        if source_file in RUN_TYPE_OVERRIDES:
+        # Saved manual corrections have highest priority.
+        if source_file in overrides:
             classifications.append(
-                RUN_TYPE_OVERRIDES[source_file]
+                overrides[source_file]
             )
             continue
 
-        # Detect non-running activities.
+        # Categorize non-running activities.
         non_running_label = (
-            classify_non_running_activity(run)
+            classify_non_running_activity(
+                run
+            )
         )
 
         if non_running_label is not None:
@@ -385,7 +397,7 @@ def classify_runs(df, summary):
             run
         )
 
-        # Long Run takes priority over Workout.
+        # Long Run takes priority over every running category.
         if (
             index == longest_run_index
             and miles >= long_run_threshold
@@ -395,8 +407,7 @@ def classify_runs(df, summary):
             )
             continue
 
-        # Strides are checked before Workout so short
-        # repetitions do not become workouts.
+        # Strides are checked before Workout.
         if has_stride_pattern(
             run,
             run_pace,
@@ -406,8 +417,9 @@ def classify_runs(df, summary):
             )
             continue
 
-        # Any lap 45 sec/mi faster than the weekly
-        # average makes the activity a Workout.
+        # Workout rule:
+        # one lap at least 0.10 mi long and
+        # 60 sec/mi faster than weekly average.
         if has_workout_lap(
             run,
             weekly_pace,

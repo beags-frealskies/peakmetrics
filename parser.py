@@ -1,149 +1,114 @@
-"""FIT parsing helpers for PeakMetrics."""
+"""FIT file parsing for PeakMetrics."""
 
-from __future__ import annotations
-
-import re
 from pathlib import Path
-from typing import Any
 
-import pandas as pd
-from fitdecode import FitReader
+import fitdecode
 
 
-def discover_fit_files(folder: Path | str):
-    """Return a lightweight list of discovered FIT files and their distances."""
+def message_value(message, *field_names, default=None):
+    """Return the first matching field value from a FIT message."""
 
-    folder = Path(folder)
-    discovered = []
+    for field_name in field_names:
+        for field in message.fields:
+            if field.name == field_name:
+                return field.value
 
-    for fit_file in sorted(folder.glob("*.fit")):
-        try:
-            text = fit_file.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            text = ""
-
-        distance_match = re.search(
-            r"Distance:\s*([0-9]+(?:\.[0-9]+)?)\s*mi",
-            text,
-            re.IGNORECASE,
-        )
-
-        distance = None
-
-        if distance_match:
-            distance = float(distance_match.group(1))
-
-        discovered.append(
-            {
-                "name": fit_file.name,
-                "distance": distance,
-            }
-        )
-
-    return discovered
+    return default
 
 
-def sanitize_for_excel(df: pd.DataFrame) -> pd.DataFrame:
-    """Strip timezone metadata from datetime columns before Excel output."""
+def read_fit_file(file_path):
+    """Read session and lap information from one FIT file."""
 
-    cleaned = df.copy()
+    session = None
+    laps = []
 
-    for column in cleaned.columns:
-        if pd.api.types.is_datetime64tz_dtype(cleaned[column]):
-            cleaned[column] = cleaned[column].dt.tz_localize(None)
+    with fitdecode.FitReader(str(file_path)) as fit_reader:
+        for frame in fit_reader:
+            if not isinstance(
+                frame,
+                fitdecode.FitDataMessage,
+            ):
+                continue
 
-    return cleaned
+            if frame.name == "session":
+                session = {
+                    "start_time": message_value(
+                        frame,
+                        "start_time",
+                    ),
+                    "sport": message_value(
+                        frame,
+                        "sport",
+                    ),
+                    "sub_sport": message_value(
+                        frame,
+                        "sub_sport",
+                    ),
+                    "total_distance": message_value(
+                        frame,
+                        "total_distance",
+                        default=0,
+                    ),
+                    "total_timer_time": message_value(
+                        frame,
+                        "total_timer_time",
+                        default=0,
+                    ),
+                    "avg_heart_rate": message_value(
+                        frame,
+                        "avg_heart_rate",
+                    ),
+                    "max_heart_rate": message_value(
+                        frame,
+                        "max_heart_rate",
+                    ),
+                    "total_ascent": message_value(
+                        frame,
+                        "total_ascent",
+                        default=0,
+                    ),
+                    "avg_running_cadence": message_value(
+                        frame,
+                        "avg_running_cadence",
+                        "avg_cadence",
+                    ),
+                    "avg_power": message_value(
+                        frame,
+                        "avg_power",
+                    ),
+                }
 
-
-def read_fit_file(path: str | Path) -> dict[str, Any]:
-    """Read a single FIT file into the workbook-friendly record structure."""
-
-    path = Path(path)
-
-    workout: dict[str, Any] = {
-        "source_file": path.name,
-        "sport": None,
-        "sub_sport": None,
-        "start_time": None,
-        "total_distance": 0,
-        "total_timer_time": 0,
-        "avg_heart_rate": None,
-        "max_heart_rate": None,
-        "total_ascent": 0,
-        "avg_running_cadence": None,
-        "avg_power": None,
-        "laps": [],
-    }
-
-    try:
-        with FitReader(path) as reader:
-            for frame in reader:
-                if getattr(frame, "frame_type", None) != 4:
-                    continue
-
-                name = getattr(frame, "name", None)
-
-                if name == "session":
-                    fields = {
-                        field.name: field.value
-                        for field in frame.fields
+            elif frame.name == "lap":
+                laps.append(
+                    {
+                        "start_time": message_value(
+                            frame,
+                            "start_time",
+                        ),
+                        "total_distance": message_value(
+                            frame,
+                            "total_distance",
+                            default=0,
+                        ),
+                        "total_timer_time": message_value(
+                            frame,
+                            "total_timer_time",
+                            default=0,
+                        ),
+                        "avg_heart_rate": message_value(
+                            frame,
+                            "avg_heart_rate",
+                        ),
                     }
+                )
 
-                    workout["sport"] = fields.get("sport")
-                    workout["sub_sport"] = fields.get("sub_sport")
-                    workout["start_time"] = fields.get("start_time")
-                    workout["total_distance"] = fields.get(
-                        "total_distance", 0
-                    )
-                    workout["total_timer_time"] = fields.get(
-                        "total_timer_time", 0
-                    )
-                    workout["avg_heart_rate"] = fields.get(
-                        "avg_heart_rate"
-                    )
-                    workout["max_heart_rate"] = fields.get(
-                        "max_heart_rate"
-                    )
-                    workout["total_ascent"] = fields.get(
-                        "total_ascent", 0
-                    )
-                    workout["avg_running_cadence"] = fields.get(
-                        "avg_running_cadence"
-                    )
-                    workout["avg_power"] = fields.get("avg_power")
-
-                elif name == "lap":
-                    fields = {
-                        field.name: field.value
-                        for field in frame.fields
-                    }
-
-                    workout["laps"].append(
-                        {
-                            "Lap": len(workout["laps"]) + 1,
-                            "Miles": fields.get("total_distance", 0),
-                            "Time": fields.get("total_timer_time", 0),
-                            "Pace": None,
-                            "Avg HR": fields.get("avg_heart_rate"),
-                        }
-                    )
-    except Exception:
-        text = ""
-
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            text = ""
-
-        distance_match = re.search(
-            r"Distance:\s*([0-9]+(?:\.[0-9]+)?)\s*mi",
-            text,
-            re.IGNORECASE,
+    if session is None:
+        raise ValueError(
+            f"No session data was found in "
+            f"{Path(file_path).name}"
         )
 
-        if distance_match:
-            workout["total_distance"] = float(
-                distance_match.group(1)
-            ) * 1609.344
+    session["laps"] = laps
+    session["source_file"] = Path(file_path).name
 
-    return workout
+    return session

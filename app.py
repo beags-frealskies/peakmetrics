@@ -6,6 +6,9 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from activity_overrides import (
+    sync_overrides_from_latest_report,
+)
 from analytics import (
     WeeklySummary,
     build_daily_mileage,
@@ -20,6 +23,7 @@ from metrics import (
     seconds_to_hms,
 )
 from parser import read_fit_file
+from pdf_report import create_pdf_report
 from run_classifier import (
     classify_runs,
     is_running_activity,
@@ -54,38 +58,78 @@ def optional_cadence(value):
 
 
 runs_folder = Path("Weekly Runs")
+reports_dir = Path("Reports")
+
+reports_dir.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+
+activity_overrides, imported_changes, source_report = (
+    sync_overrides_from_latest_report(
+        reports_dir
+    )
+)
+
+if imported_changes:
+    print(
+        f"Imported {imported_changes} activity "
+        f"type correction(s) from "
+        f"{source_report.name}."
+    )
+
+
 fit_files = sorted(
     runs_folder.glob("*.fit")
 )
 
 if not fit_files:
     raise SystemExit(
-        "No FIT files were found in the Weekly Runs folder."
+        "No FIT files were found in the "
+        "Weekly Runs folder."
     )
 
 
 rows = []
 
 for fit_file in fit_files:
-    workout = read_fit_file(fit_file)
+    workout = read_fit_file(
+        fit_file
+    )
 
-    start_time = workout["start_time"]
+    start_time = workout.get(
+        "start_time"
+    )
 
     if start_time is None:
         raise ValueError(
-            f"No start time was found in {fit_file.name}"
+            f"No start time was found in "
+            f"{fit_file.name}"
         )
 
     local_start_time = convert_to_local_time(
         start_time
     )
 
-    miles = meters_to_miles(
-        workout["total_distance"] or 0
+    distance_meters = (
+        workout.get(
+            "total_distance",
+            0,
+        )
+        or 0
     )
 
     total_seconds = (
-        workout["total_timer_time"] or 0
+        workout.get(
+            "total_timer_time",
+            0,
+        )
+        or 0
+    )
+
+    miles = meters_to_miles(
+        distance_meters
     )
 
     if miles > 0 and total_seconds > 0:
@@ -94,16 +138,32 @@ for fit_file in fit_files:
             total_seconds,
         )
     else:
-        average_pace = "—"
+        average_pace = "N/A"
 
     lap_splits = []
 
-    for lap in workout["laps"]:
-        lap_miles_meters = lap.get("Miles") or 0
-        lap_seconds = lap.get("Time") or 0
+    for lap in workout.get(
+        "laps",
+        [],
+    ):
+        lap_distance_meters = (
+            lap.get(
+                "total_distance",
+                0,
+            )
+            or 0
+        )
+
+        lap_seconds = (
+            lap.get(
+                "total_timer_time",
+                0,
+            )
+            or 0
+        )
 
         lap_miles = meters_to_miles(
-            lap_miles_meters
+            lap_distance_meters
         )
 
         if (
@@ -114,7 +174,10 @@ for fit_file in fit_files:
 
         lap_splits.append(
             {
-                "Lap": len(lap_splits) + 1,
+                "Lap": (
+                    len(lap_splits)
+                    + 1
+                ),
                 "Miles": lap_miles,
                 "Time": seconds_to_hms(
                     lap_seconds
@@ -123,7 +186,9 @@ for fit_file in fit_files:
                     lap_miles,
                     lap_seconds,
                 ),
-                "Avg HR": lap.get("Avg HR"),
+                "Avg HR": lap.get(
+                    "avg_heart_rate"
+                ),
             }
         )
 
@@ -141,35 +206,42 @@ for fit_file in fit_files:
                 .lstrip("0")
             ),
             "Run Type": "Other",
-            "Sport": workout.get("sport"),
+            "Sport": workout.get(
+                "sport"
+            ),
             "Sub Sport": workout.get(
                 "sub_sport"
             ),
-            "Source File": workout[
-                "source_file"
-            ],
+            "Source File": workout.get(
+                "source_file",
+                fit_file.name,
+            ),
             "Miles": miles,
             "Time": seconds_to_hms(
                 total_seconds
             ),
             "Pace (/mi)": average_pace,
-            "Avg HR": workout[
+            "Avg HR": workout.get(
                 "avg_heart_rate"
-            ],
-            "Max HR": workout[
+            ),
+            "Max HR": workout.get(
                 "max_heart_rate"
-            ],
+            ),
             "Elevation (ft)": meters_to_feet(
-                workout["total_ascent"] or 0
+                workout.get(
+                    "total_ascent",
+                    0,
+                )
+                or 0
             ),
             "Cadence (spm)": optional_cadence(
-                workout[
+                workout.get(
                     "avg_running_cadence"
-                ]
+                )
             ),
-            "Power (W)": workout[
+            "Power (W)": workout.get(
                 "avg_power"
-            ],
+            ),
             "Laps": lap_splits,
         }
     )
@@ -182,6 +254,7 @@ df = (
     .reset_index(drop=True)
 )
 
+
 running_mask = df.apply(
     is_running_activity,
     axis=1,
@@ -193,12 +266,13 @@ running_df = (
     .reset_index(drop=True)
 )
 
+
 if running_df.empty:
     summary = WeeklySummary(
         runs=0,
         mileage=0,
         total_seconds=0,
-        average_pace="—",
+        average_pace="N/A",
         average_hr=0,
         max_hr=0,
         average_power=0,
@@ -206,7 +280,10 @@ if running_df.empty:
     )
 
     daily_mileage = pd.DataFrame(
-        columns=["Date", "Miles"]
+        columns=[
+            "Date",
+            "Miles",
+        ]
     )
 
 else:
@@ -218,16 +295,61 @@ else:
         running_df
     )
 
+
 df = classify_runs(
     df,
     summary,
+    overrides=activity_overrides,
 )
 
-output = create_excel_report(
+
+report_start = str(
+    df["Date"].min()
+)
+
+report_end = str(
+    df["Date"].max()
+)
+
+report_name = (
+    f"PeakMetrics_"
+    f"{report_start}_to_"
+    f"{report_end}"
+)
+
+
+excel_output = create_excel_report(
     df=df,
     summary=summary,
     daily_mileage=daily_mileage,
-    output_path="Reports/Week_Data.xlsx",
+    output_path=(
+        reports_dir
+        / f"{report_name}.xlsx"
+    ),
 )
 
-print(f"Created report: {output}")
+pdf_output = create_pdf_report(
+    df=df,
+    summary=summary,
+    daily_mileage=daily_mileage,
+    output_path=(
+        reports_dir
+        / f"{report_name}.pdf"
+    ),
+)
+
+
+print(
+    f"Created Excel report: "
+    f"{excel_output}"
+)
+
+print(
+    f"Created PDF report: "
+    f"{pdf_output}"
+)
+
+print(
+    f"Saved activity overrides: "
+    f"{len(activity_overrides)}"
+)
