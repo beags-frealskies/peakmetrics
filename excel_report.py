@@ -4,21 +4,17 @@ from datetime import datetime
 from pathlib import Path
 
 from openpyxl import Workbook
-from openpyxl.chart import (
-    BarChart,
-    Reference,
-)
-from openpyxl.chart.label import (
-    DataLabelList,
-)
+from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.label import DataLabelList
 from openpyxl.styles import Font
 
 from dashboard import draw_metric_card
+from history_sheet import create_history_sheet
 from run_cards import create_report_sheet
 
 
 def build_output_path(output_path):
-    """Return a path without overwriting a report."""
+    """Return a path without overwriting an existing report."""
 
     path = Path(output_path)
 
@@ -34,8 +30,7 @@ def build_output_path(output_path):
 
     while True:
         candidate = path.parent / (
-            f"{path.stem}_{counter}"
-            f"{path.suffix}"
+            f"{path.stem}_{counter}{path.suffix}"
         )
 
         if not candidate.exists():
@@ -168,7 +163,7 @@ def create_summary_sheet(
 
 
 def friendly_day(value):
-    """Create a label such as Wed 7/8."""
+    """Create a chart label such as Wed 7/8."""
 
     try:
         date = datetime.fromisoformat(
@@ -188,7 +183,7 @@ def add_mileage_chart(
     ws,
     daily_mileage,
 ):
-    """Add daily mileage totals by date."""
+    """Add daily mileage totals, combining doubles by date."""
 
     if daily_mileage.empty:
         ws["A25"] = (
@@ -209,19 +204,19 @@ def add_mileage_chart(
         data_column + 1,
     ).value = "Miles"
 
-    for index, row in enumerate(
+    for row_number, row in enumerate(
         daily_mileage.itertuples(),
         start=data_start_row + 1,
     ):
         ws.cell(
-            index,
+            row_number,
             data_column,
         ).value = friendly_day(
             row.Date
         )
 
         ws.cell(
-            index,
+            row_number,
             data_column + 1,
         ).value = float(
             row.Miles
@@ -286,12 +281,7 @@ def create_activity_data_sheet(
     wb,
     df,
 ):
-    """
-    Store the connection between each activity
-    and its dropdown cell.
-
-    This sheet is hidden from the user.
-    """
+    """Store hidden dropdown-tracking information."""
 
     ws = wb.create_sheet(
         "_ActivityData"
@@ -332,8 +322,7 @@ def create_activity_data_sheet(
             )
         )
 
-        # Activity type is stored in the
-        # merged cell beginning in column I.
+        # The activity-type dropdown begins in column I.
         type_cell = f"I{start_row}"
 
         ws.append(
@@ -359,9 +348,10 @@ def create_excel_report(
     df,
     summary,
     daily_mileage,
+    weekly_history,
     output_path,
 ):
-    """Create the complete PeakMetrics workbook."""
+    """Create the complete PeakMetrics Excel report."""
 
     output_path = build_output_path(
         output_path
@@ -383,6 +373,11 @@ def create_excel_report(
     create_report_sheet(
         wb,
         df,
+    )
+
+    create_history_sheet(
+        wb,
+        weekly_history,
     )
 
     create_activity_data_sheet(

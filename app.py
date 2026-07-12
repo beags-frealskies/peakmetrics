@@ -15,6 +15,7 @@ from analytics import (
     build_week_summary,
 )
 from excel_report import create_excel_report
+from history_analytics import load_weekly_history
 from metrics import (
     cadence_to_spm,
     meters_to_feet,
@@ -28,11 +29,10 @@ from run_classifier import (
     classify_runs,
     is_running_activity,
 )
+from training_history import save_training_history
 
 
-LOCAL_TIMEZONE = ZoneInfo(
-    "America/Denver"
-)
+LOCAL_TIMEZONE = ZoneInfo("America/Denver")
 
 
 def convert_to_local_time(start_time):
@@ -174,10 +174,7 @@ for fit_file in fit_files:
 
         lap_splits.append(
             {
-                "Lap": (
-                    len(lap_splits)
-                    + 1
-                ),
+                "Lap": len(lap_splits) + 1,
                 "Miles": lap_miles,
                 "Time": seconds_to_hms(
                     lap_seconds
@@ -303,6 +300,13 @@ df = classify_runs(
 )
 
 
+history_result = save_training_history(
+    df
+)
+
+weekly_history = load_weekly_history()
+
+
 report_start = str(
     df["Date"].min()
 )
@@ -322,6 +326,7 @@ excel_output = create_excel_report(
     df=df,
     summary=summary,
     daily_mileage=daily_mileage,
+    weekly_history=weekly_history,
     output_path=(
         reports_dir
         / f"{report_name}.xlsx"
@@ -352,4 +357,22 @@ print(
 print(
     f"Saved activity overrides: "
     f"{len(activity_overrides)}"
+)
+
+print(
+    "Training history: "
+    f"{history_result['added']} added, "
+    f"{history_result['updated']} updated, "
+    f"{history_result['total_activities']} "
+    "total activities."
+)
+
+print(
+    f"Stored history weeks: "
+    f"{len(weekly_history)}"
+)
+
+print(
+    f"Database: "
+    f"{history_result['database_path']}"
 )
