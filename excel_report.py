@@ -1,10 +1,15 @@
 """Excel report generation helpers."""
 
+import shutil
 from pathlib import Path
 
 from openpyxl import Workbook
 
 from history_sheet import create_history_sheet
+from report_archive import (
+    archive_existing_reports,
+    build_current_archive_path,
+)
 from run_cards import create_report_sheet
 from summary_sheet import create_summary_sheet
 
@@ -126,6 +131,36 @@ def create_excel_report(
         output_path
     )
 
+    reports_folder = (
+        output_path.parent
+    )
+
+    archive_folder = (
+        reports_folder
+        / "Weekly Archive"
+    )
+
+    archive_folder.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    current_archive_path = (
+        build_current_archive_path(
+            df,
+            archive_folder,
+        )
+    )
+
+    archive_existing_reports(
+        reports_folder=reports_folder,
+        archive_folder=archive_folder,
+        weekly_history=weekly_history,
+        current_archive_path=(
+            current_archive_path
+        ),
+    )
+
     wb = Workbook()
 
     create_summary_sheet(
@@ -143,6 +178,10 @@ def create_excel_report(
     create_history_sheet(
         wb,
         weekly_history,
+        archive_folder=archive_folder,
+        current_archive_path=(
+            current_archive_path
+        ),
     )
 
     create_activity_data_sheet(
@@ -152,8 +191,26 @@ def create_excel_report(
 
     wb.active = 0
 
-    wb.save(
-        output_path
+    try:
+        # Save the permanent canonical workbook first.
+        # Saving only once also keeps embedded charts safe.
+        wb.save(
+            current_archive_path
+        )
+
+    except PermissionError as error:
+        raise PermissionError(
+            "PeakMetrics could not update the "
+            "weekly archive workbook.\n\n"
+            f"Close this file if it is open:\n"
+            f"{current_archive_path}"
+        ) from error
+
+    # Create the normal numbered report as an exact
+    # copy of the canonical weekly workbook.
+    shutil.copy2(
+        current_archive_path,
+        output_path,
     )
 
     return output_path

@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 
 import matplotlib
 
@@ -9,7 +10,9 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
-from openpyxl.drawing.image import Image as ExcelImage
+from openpyxl.drawing.image import (
+    Image as ExcelImage,
+)
 from openpyxl.styles import (
     Alignment,
     Border,
@@ -18,6 +21,12 @@ from openpyxl.styles import (
     Side,
 )
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.hyperlink import Hyperlink
+
+from report_archive import (
+    canonical_week_path,
+    parse_date_value,
+)
 
 
 # PeakMetrics brand palette.
@@ -60,6 +69,15 @@ CARD_BORDER = Border(
 )
 
 
+def excel_color(value):
+    """Remove the # for openpyxl colors."""
+
+    return value.replace(
+        "#",
+        "",
+    )
+
+
 def draw_history_metric(
     ws,
     start_row,
@@ -69,7 +87,9 @@ def draw_history_metric(
 ):
     """Draw one history summary card."""
 
-    end_column = start_column + 2
+    end_column = (
+        start_column + 2
+    )
 
     ws.merge_cells(
         start_row=start_row,
@@ -94,7 +114,9 @@ def draw_history_metric(
     value_cell.font = Font(
         size=18,
         bold=True,
-        color="12304A",
+        color=excel_color(
+            PEAK_NAVY
+        ),
     )
     value_cell.alignment = Alignment(
         horizontal="center",
@@ -109,7 +131,9 @@ def draw_history_metric(
     label_cell.value = label
     label_cell.font = Font(
         size=9,
-        color="486581",
+        color=excel_color(
+            SECONDARY_TEXT
+        ),
     )
     label_cell.alignment = Alignment(
         horizontal="center",
@@ -197,22 +221,29 @@ def create_weekly_mileage_chart(
         .copy()
     )
 
-    chart_records = chart_history.to_dict(
-        "records"
+    chart_records = (
+        chart_history.to_dict(
+            "records"
+        )
     )
 
     week_labels = [
-        format_week_chart_label(record)
+        format_week_chart_label(
+            record
+        )
         for record in chart_records
     ]
 
     mileage_values = [
         float(value)
-        for value in chart_history["Miles"]
+        for value
+        in chart_history["Miles"]
     ]
 
     x_positions = list(
-        range(len(mileage_values))
+        range(
+            len(mileage_values)
+        )
     )
 
     figure, axis = plt.subplots(
@@ -249,7 +280,9 @@ def create_weekly_mileage_chart(
         chart_ceiling,
     )
 
-    axis.set_axisbelow(True)
+    axis.set_axisbelow(
+        True
+    )
 
     axis.yaxis.set_major_locator(
         MaxNLocator(
@@ -270,7 +303,9 @@ def create_weekly_mileage_chart(
     )
 
     for spine in axis.spines.values():
-        spine.set_visible(False)
+        spine.set_visible(
+            False
+        )
 
     axis.axhline(
         0,
@@ -347,7 +382,6 @@ def create_weekly_mileage_chart(
             zorder=3,
         )
 
-        # Highlight the newest week.
         axis.scatter(
             [x_positions[-1]],
             [mileage_values[-1]],
@@ -404,7 +438,10 @@ def create_weekly_mileage_chart(
     )
 
     if len(chart_history) == 1:
-        subtitle = "Current stored training week"
+        subtitle = (
+            "Current stored training week"
+        )
+
     else:
         subtitle = (
             f"Most recent "
@@ -439,12 +476,16 @@ def create_weekly_mileage_chart(
 
     if len(mileage_values) <= 8:
         label_indexes = list(
-            range(len(mileage_values))
+            range(
+                len(mileage_values)
+            )
         )
 
     else:
-        highest_index = mileage_values.index(
-            maximum_mileage
+        highest_index = (
+            mileage_values.index(
+                maximum_mileage
+            )
         )
 
         label_indexes = sorted(
@@ -488,16 +529,66 @@ def create_weekly_mileage_chart(
         figure
     )
 
-    image_buffer.seek(0)
+    image_buffer.seek(
+        0
+    )
 
     return image_buffer
+
+
+def add_workbook_hyperlink(
+    cell,
+    archive_path,
+    sheet_name,
+    display_text,
+):
+    """Link a cell to a sheet inside an archived workbook."""
+
+    archive_path = Path(
+        archive_path
+    )
+
+    cell.value = display_text
+
+    cell.hyperlink = Hyperlink(
+        ref=cell.coordinate,
+        target=(
+            archive_path
+            .resolve()
+            .as_uri()
+        ),
+        location=(
+            f"{sheet_name}!A1"
+        ),
+        display=display_text,
+    )
+
+    cell.font = Font(
+        name="Arial",
+        size=9,
+        bold=True,
+        underline="single",
+        color=excel_color(
+            PEAK_TEAL
+        ),
+    )
 
 
 def create_history_sheet(
     wb,
     weekly_history,
+    archive_folder,
+    current_archive_path,
 ):
-    """Create the multi-week training-history sheet."""
+    """Create the interactive training-history sheet."""
+
+    archive_folder = Path(
+        archive_folder
+    )
+
+    current_archive_path = Path(
+        current_archive_path
+    )
 
     ws = wb.create_sheet(
         "History"
@@ -506,6 +597,11 @@ def create_history_sheet(
     ws.sheet_view.showGridLines = False
     ws.sheet_view.zoomScale = 90
     ws.freeze_panes = None
+    ws.sheet_properties.tabColor = (
+        excel_color(
+            PEAK_TEAL
+        )
+    )
 
     ws.merge_cells(
         "A1:O1"
@@ -515,13 +611,17 @@ def create_history_sheet(
     ws["A1"].font = Font(
         size=24,
         bold=True,
-        color="12304A",
+        color=excel_color(
+            PEAK_NAVY
+        ),
     )
     ws["A1"].alignment = Alignment(
         vertical="center",
     )
 
-    ws.row_dimensions[1].height = 34
+    ws.row_dimensions[
+        1
+    ].height = 34
 
     ws.merge_cells(
         "A2:O2"
@@ -533,7 +633,9 @@ def create_history_sheet(
     )
     ws["A2"].font = Font(
         size=11,
-        color="486581",
+        color=excel_color(
+            SECONDARY_TEXT
+        ),
     )
 
     if weekly_history.empty:
@@ -544,14 +646,18 @@ def create_history_sheet(
         ws["A4"].font = Font(
             size=12,
             italic=True,
-            color="486581",
+            color=excel_color(
+                SECONDARY_TEXT
+            ),
         )
 
         return
 
-    history_summary = weekly_history.attrs.get(
-        "summary",
-        {},
+    history_summary = (
+        weekly_history.attrs.get(
+            "summary",
+            {},
+        )
     )
 
     total_weeks = int(
@@ -564,14 +670,18 @@ def create_history_sheet(
     total_miles = float(
         history_summary.get(
             "Total Mileage",
-            weekly_history["Miles"].sum(),
+            weekly_history[
+                "Miles"
+            ].sum(),
         )
     )
 
     average_week = float(
         history_summary.get(
             "Average Week",
-            weekly_history["Miles"].mean(),
+            weekly_history[
+                "Miles"
+            ].mean(),
         )
     )
 
@@ -589,23 +699,31 @@ def create_history_sheet(
         )
     )
 
-    ytd_average_pace = history_summary.get(
-        "YTD Average Pace",
-        "N/A",
+    ytd_average_pace = (
+        history_summary.get(
+            "YTD Average Pace",
+            "N/A",
+        )
     )
 
-    historical_average_pace = history_summary.get(
-        "Historical Average Pace",
-        "N/A",
+    historical_average_pace = (
+        history_summary.get(
+            "Historical Average Pace",
+            "N/A",
+        )
     )
 
-    best_week_index = weekly_history[
-        "Miles"
-    ].idxmax()
+    best_week_index = (
+        weekly_history[
+            "Miles"
+        ].idxmax()
+    )
 
-    best_week = weekly_history.loc[
-        best_week_index
-    ]
+    best_week = (
+        weekly_history.loc[
+            best_week_index
+        ]
+    )
 
     draw_history_metric(
         ws,
@@ -635,8 +753,13 @@ def create_history_sheet(
         ws,
         4,
         13,
-        f"{float(best_week['Miles']):.1f} mi",
-        f"Highest Week: {best_week['Week']}",
+        (
+            f"{float(best_week['Miles']):.1f} mi"
+        ),
+        (
+            f"Highest Week: "
+            f"{best_week['Week']}"
+        ),
     )
 
     draw_history_metric(
@@ -652,7 +775,10 @@ def create_history_sheet(
         8,
         5,
         ytd_average_pace,
-        f"{current_year} YTD Average Pace",
+        (
+            f"{current_year} "
+            "YTD Average Pace"
+        ),
     )
 
     draw_history_metric(
@@ -663,8 +789,13 @@ def create_history_sheet(
         "Historical Average Pace",
     )
 
-    ws.row_dimensions[6].height = 28
-    ws.row_dimensions[10].height = 28
+    ws.row_dimensions[
+        6
+    ].height = 28
+
+    ws.row_dimensions[
+        10
+    ].height = 28
 
     mileage_chart_buffer = (
         create_weekly_mileage_chart(
@@ -676,8 +807,6 @@ def create_history_sheet(
         mileage_chart_buffer
     )
 
-    # Keep the BytesIO object alive until
-    # the workbook finishes saving.
     mileage_chart._peakmetrics_buffer = (
         mileage_chart_buffer
     )
@@ -691,17 +820,37 @@ def create_history_sheet(
     )
 
     ws.merge_cells(
-        "A37:I37"
+        "A37:J37"
     )
 
     ws["A37"] = "Weekly Details"
     ws["A37"].font = Font(
         size=14,
         bold=True,
-        color="12304A",
+        color=excel_color(
+            PEAK_NAVY
+        ),
     )
 
-    table_start_row = 39
+    ws.merge_cells(
+        "A38:J38"
+    )
+
+    ws["A38"] = (
+        "Click a week to open its Summary. "
+        "Use Open Report to jump directly "
+        "to the activity cards."
+    )
+    ws["A38"].font = Font(
+        name="Arial",
+        size=9,
+        italic=True,
+        color=excel_color(
+            SECONDARY_TEXT
+        ),
+    )
+
+    table_start_row = 40
 
     headers = [
         "Week",
@@ -713,6 +862,7 @@ def create_history_sheet(
         "Workouts",
         "Long Runs",
         "Strides",
+        "Open Report",
     ]
 
     for column_number, header in enumerate(
@@ -726,8 +876,11 @@ def create_history_sheet(
 
         cell.value = header
         cell.font = Font(
+            name="Arial",
             bold=True,
-            color="12304A",
+            color=excel_color(
+                PEAK_NAVY
+            ),
         )
         cell.fill = TABLE_HEADER_FILL
         cell.alignment = Alignment(
@@ -737,9 +890,13 @@ def create_history_sheet(
         )
         cell.border = CARD_BORDER
 
-    rows = weekly_history[
-        headers
-    ].to_dict("records")
+    rows = weekly_history.to_dict(
+        "records"
+    )
+
+    current_archive_resolved = (
+        current_archive_path.resolve()
+    )
 
     for row_number, record in enumerate(
         rows,
@@ -770,6 +927,7 @@ def create_history_sheet(
             int(record["Workouts"]),
             int(record["Long Runs"]),
             int(record["Strides"]),
+            "",
         ]
 
         for column_number, value in enumerate(
@@ -787,12 +945,91 @@ def create_history_sheet(
                 horizontal="center",
                 vertical="center",
             )
+            cell.font = Font(
+                name="Arial",
+                size=9,
+                color=excel_color(
+                    DARK_TEXT
+                ),
+            )
 
             if column_number == 2:
-                cell.number_format = "0.00"
+                cell.number_format = (
+                    "0.00"
+                )
 
             if row_number % 2 == 0:
                 cell.fill = ALTERNATE_FILL
+
+        week_start = parse_date_value(
+            record["Week Start"]
+        )
+
+        week_end = parse_date_value(
+            record["Week End"]
+        )
+
+        archive_path = canonical_week_path(
+            archive_folder,
+            week_start,
+            week_end,
+        )
+
+        is_current_week = (
+            archive_path.resolve()
+            == current_archive_resolved
+        )
+
+        archive_available = (
+            archive_path.exists()
+            or is_current_week
+        )
+
+        week_cell = ws.cell(
+            row=row_number,
+            column=1,
+        )
+
+        report_cell = ws.cell(
+            row=row_number,
+            column=10,
+        )
+
+        if archive_available:
+            add_workbook_hyperlink(
+                week_cell,
+                archive_path,
+                "Summary",
+                str(record["Week"]),
+            )
+
+            add_workbook_hyperlink(
+                report_cell,
+                archive_path,
+                "Report",
+                "Open Report",
+            )
+
+        else:
+            week_cell.font = Font(
+                name="Arial",
+                size=9,
+                color=excel_color(
+                    DARK_TEXT
+                ),
+            )
+
+            report_cell.value = (
+                "Not archived"
+            )
+            report_cell.font = Font(
+                name="Arial",
+                size=9,
+                italic=True,
+                color=excel_color(
+                    LIGHT_TEXT
+                ),
+            )
 
     final_row = (
         table_start_row
@@ -801,21 +1038,51 @@ def create_history_sheet(
 
     ws.auto_filter.ref = (
         f"A{table_start_row}:"
-        f"I{final_row}"
+        f"J{final_row}"
     )
 
-    ws.column_dimensions["A"].width = 16
-    ws.column_dimensions["B"].width = 11
-    ws.column_dimensions["C"].width = 12
-    ws.column_dimensions["D"].width = 15
-    ws.column_dimensions["E"].width = 13
-    ws.column_dimensions["F"].width = 9
-    ws.column_dimensions["G"].width = 11
-    ws.column_dimensions["H"].width = 11
-    ws.column_dimensions["I"].width = 9
+    ws.column_dimensions[
+        "A"
+    ].width = 17
+
+    ws.column_dimensions[
+        "B"
+    ].width = 11
+
+    ws.column_dimensions[
+        "C"
+    ].width = 12
+
+    ws.column_dimensions[
+        "D"
+    ].width = 15
+
+    ws.column_dimensions[
+        "E"
+    ].width = 13
+
+    ws.column_dimensions[
+        "F"
+    ].width = 9
+
+    ws.column_dimensions[
+        "G"
+    ].width = 11
+
+    ws.column_dimensions[
+        "H"
+    ].width = 11
+
+    ws.column_dimensions[
+        "I"
+    ].width = 9
+
+    ws.column_dimensions[
+        "J"
+    ].width = 15
 
     for column_number in range(
-        10,
+        11,
         17,
     ):
         column_letter = get_column_letter(

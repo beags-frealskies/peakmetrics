@@ -3,7 +3,6 @@
 from datetime import timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from config import CONFIG
 
 import pandas as pd
 
@@ -15,6 +14,7 @@ from analytics import (
     build_daily_mileage,
     build_week_summary,
 )
+from config import CONFIG
 from excel_report import create_excel_report
 from history_analytics import load_weekly_history
 from metrics import (
@@ -31,6 +31,7 @@ from run_classifier import (
     is_running_activity,
 )
 from training_history import save_training_history
+from training_totals import counts_toward_totals
 
 
 LOCAL_TIMEZONE = ZoneInfo(
@@ -38,8 +39,10 @@ LOCAL_TIMEZONE = ZoneInfo(
 )
 
 
-def convert_to_local_time(start_time):
-    """Convert a FIT timestamp into Utah local time."""
+def convert_to_local_time(
+    start_time,
+):
+    """Convert a FIT timestamp into the configured timezone."""
 
     if start_time.tzinfo is None:
         start_time = start_time.replace(
@@ -57,11 +60,59 @@ def optional_cadence(value):
     if value is None:
         return None
 
-    return cadence_to_spm(value)
+    return cadence_to_spm(
+        value
+    )
 
 
-runs_folder = Path("Weekly Runs")
-reports_dir = Path("Reports")
+def empty_weekly_summary():
+    """Return a blank weekly running summary."""
+
+    return WeeklySummary(
+        runs=0,
+        mileage=0,
+        total_seconds=0,
+        average_pace="N/A",
+        average_hr=0,
+        max_hr=0,
+        average_power=0,
+        elevation_gain=0,
+    )
+
+
+def calculate_summary_data(
+    activity_df,
+):
+    """Calculate summary and daily mileage from eligible activities."""
+
+    if activity_df.empty:
+        return (
+            empty_weekly_summary(),
+            pd.DataFrame(
+                columns=[
+                    "Date",
+                    "Miles",
+                ]
+            ),
+        )
+
+    return (
+        build_week_summary(
+            activity_df
+        ),
+        build_daily_mileage(
+            activity_df
+        ),
+    )
+
+
+runs_folder = Path(
+    "Weekly Runs"
+)
+
+reports_dir = Path(
+    "Reports"
+)
 
 reports_dir.mkdir(
     parents=True,
@@ -135,11 +186,15 @@ for fit_file in fit_files:
         distance_meters
     )
 
-    if miles > 0 and total_seconds > 0:
+    if (
+        miles > 0
+        and total_seconds > 0
+    ):
         average_pace = pace_from_time(
             miles,
             total_seconds,
         )
+
     else:
         average_pace = "N/A"
 
@@ -177,7 +232,10 @@ for fit_file in fit_files:
 
         lap_splits.append(
             {
-                "Lap": len(lap_splits) + 1,
+                "Lap": (
+                    len(lap_splits)
+                    + 1
+                ),
                 "Miles": lap_miles,
                 "Time": seconds_to_hms(
                     lap_seconds
@@ -247,59 +305,69 @@ for fit_file in fit_files:
     )
 
 
-df = pd.DataFrame(rows)
+df = pd.DataFrame(
+    rows
+)
 
 df = (
-    df.sort_values("Start Time")
-    .reset_index(drop=True)
+    df.sort_values(
+        "Start Time"
+    )
+    .reset_index(
+        drop=True
+    )
 )
 
 
-running_mask = df.apply(
+# First calculate a temporary running summary so the
+# automatic activity classifier has a weekly pace reference.
+classification_mask = df.apply(
     is_running_activity,
     axis=1,
 )
 
-running_df = (
-    df[running_mask]
+classification_df = (
+    df[classification_mask]
     .copy()
-    .reset_index(drop=True)
+    .reset_index(
+        drop=True
+    )
+)
+
+classification_summary, _ = (
+    calculate_summary_data(
+        classification_df
+    )
 )
 
 
-if running_df.empty:
-    summary = WeeklySummary(
-        runs=0,
-        mileage=0,
-        total_seconds=0,
-        average_pace="N/A",
-        average_hr=0,
-        max_hr=0,
-        average_power=0,
-        elevation_gain=0,
-    )
-
-    daily_mileage = pd.DataFrame(
-        columns=[
-            "Date",
-            "Miles",
-        ]
-    )
-
-else:
-    summary = build_week_summary(
-        running_df
-    )
-
-    daily_mileage = build_daily_mileage(
-        running_df
-    )
-
-
+# Apply automatic classifications and saved manual overrides.
 df = classify_runs(
     df,
-    summary,
+    classification_summary,
     overrides=activity_overrides,
+)
+
+
+# Strides remain in the report but are excluded from every
+# weekly, historical, and year-to-date aggregate metric.
+totals_mask = df.apply(
+    counts_toward_totals,
+    axis=1,
+)
+
+totals_df = (
+    df[totals_mask]
+    .copy()
+    .reset_index(
+        drop=True
+    )
+)
+
+summary, daily_mileage = (
+    calculate_summary_data(
+        totals_df
+    )
 )
 
 

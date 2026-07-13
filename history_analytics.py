@@ -8,6 +8,7 @@ import pandas as pd
 
 from run_classifier import is_running_activity
 from training_history import DEFAULT_DATABASE_PATH
+from training_totals import counts_toward_totals
 
 
 HISTORY_COLUMNS = [
@@ -55,20 +56,29 @@ def empty_history():
     return history
 
 
-def format_duration(total_seconds):
+def format_duration(
+    total_seconds,
+):
     """Convert seconds into a readable weekly duration."""
 
     total_seconds = int(
         round(total_seconds)
     )
 
-    hours = total_seconds // 3600
+    hours = (
+        total_seconds
+        // 3600
+    )
 
     minutes = (
-        total_seconds % 3600
+        total_seconds
+        % 3600
     ) // 60
 
-    return f"{hours}h {minutes}m"
+    return (
+        f"{hours}h "
+        f"{minutes}m"
+    )
 
 
 def format_pace(
@@ -90,8 +100,15 @@ def format_pace(
         )
     )
 
-    minutes = pace_seconds // 60
-    seconds = pace_seconds % 60
+    minutes = (
+        pace_seconds
+        // 60
+    )
+
+    seconds = (
+        pace_seconds
+        % 60
+    )
 
     return (
         f"{minutes}:"
@@ -103,7 +120,7 @@ def build_week_label(
     week_start,
     week_end,
 ):
-    """Create a short label such as 6/29-7/5."""
+    """Create a short date label."""
 
     return (
         f"{week_start.month}/"
@@ -113,7 +130,9 @@ def build_week_label(
     )
 
 
-def weighted_average_hr(group):
+def weighted_average_hr(
+    group,
+):
     """Calculate duration-weighted average heart rate."""
 
     heart_rate_rows = group[
@@ -125,7 +144,9 @@ def weighted_average_hr(group):
 
     weights = heart_rate_rows[
         "Duration Seconds"
-    ].clip(lower=0)
+    ].clip(
+        lower=0
+    )
 
     if weights.sum() > 0:
         weighted_total = (
@@ -149,28 +170,36 @@ def weighted_average_hr(group):
     )
 
 
-def build_history_summary(activities):
-    """Calculate year-to-date and all-time metrics."""
+def build_history_summary(
+    eligible_activities,
+):
+    """Calculate YTD and historical metrics without strides."""
 
     current_year = date.today().year
 
     total_miles = float(
-        activities["Miles"].sum()
+        eligible_activities[
+            "Miles"
+        ].sum()
     )
 
     total_seconds = float(
-        activities[
+        eligible_activities[
             "Duration Seconds"
         ].sum()
     )
 
-    ytd_activities = activities[
-        activities["Date"].dt.year
+    ytd_activities = eligible_activities[
+        eligible_activities[
+            "Date"
+        ].dt.year
         == current_year
     ].copy()
 
     ytd_miles = float(
-        ytd_activities["Miles"].sum()
+        ytd_activities[
+            "Miles"
+        ].sum()
     )
 
     ytd_seconds = float(
@@ -270,22 +299,49 @@ def load_weekly_history(
     activities["Miles"] = pd.to_numeric(
         activities["miles"],
         errors="coerce",
-    ).fillna(0.0)
+    ).fillna(
+        0.0
+    )
 
     activities[
         "Duration Seconds"
     ] = pd.to_numeric(
         activities["duration_seconds"],
         errors="coerce",
-    ).fillna(0)
+    ).fillna(
+        0
+    )
 
     activities["Avg HR"] = pd.to_numeric(
         activities["avg_hr"],
         errors="coerce",
     )
 
+    activities[
+        "Counts Toward Totals"
+    ] = activities.apply(
+        lambda row: counts_toward_totals(
+            {
+                "Sport": row["sport"],
+                "Sub Sport": row[
+                    "sub_sport"
+                ],
+                "Run Type": row[
+                    "run_type"
+                ],
+            }
+        ),
+        axis=1,
+    )
+
+    eligible_activities = activities[
+        activities[
+            "Counts Toward Totals"
+        ]
+    ].copy()
+
     history_summary = build_history_summary(
-        activities
+        eligible_activities
     )
 
     activities["Week Start"] = (
@@ -310,22 +366,40 @@ def load_weekly_history(
 
         week_end_date = (
             week_start_date
-            + timedelta(days=6)
-        )
-
-        total_miles = float(
-            group["Miles"].sum()
-        )
-
-        total_seconds = int(
-            group[
-                "Duration Seconds"
-            ].sum()
+            + timedelta(
+                days=6
+            )
         )
 
         run_types = group[
             "run_type"
-        ].fillna("Other")
+        ].fillna(
+            "Other"
+        )
+
+        totals_group = group[
+            group[
+                "Counts Toward Totals"
+            ]
+        ].copy()
+
+        total_miles = float(
+            totals_group[
+                "Miles"
+            ].sum()
+        )
+
+        total_seconds = int(
+            totals_group[
+                "Duration Seconds"
+            ].sum()
+        )
+
+        eligible_run_types = totals_group[
+            "run_type"
+        ].fillna(
+            "Other"
+        )
 
         records.append(
             {
@@ -346,17 +420,19 @@ def load_weekly_history(
                     2,
                 ),
                 "Runs": int(
-                    len(group)
+                    len(
+                        totals_group
+                    )
                 ),
                 "Workouts": int(
                     (
-                        run_types
+                        eligible_run_types
                         == "Workout"
                     ).sum()
                 ),
                 "Long Runs": int(
                     (
-                        run_types
+                        eligible_run_types
                         == "Long Run"
                     ).sum()
                 ),
@@ -375,8 +451,10 @@ def load_weekly_history(
                 ),
                 "Average HR": (
                     weighted_average_hr(
-                        group
+                        totals_group
                     )
+                    if not totals_group.empty
+                    else 0
                 ),
             }
         )
@@ -386,10 +464,16 @@ def load_weekly_history(
         columns=HISTORY_COLUMNS,
     )
 
-    total_weeks = len(history)
+    total_weeks = len(
+        history
+    )
 
     average_week = (
-        float(history["Miles"].mean())
+        float(
+            history[
+                "Miles"
+            ].mean()
+        )
         if total_weeks > 0
         else 0.0
     )
@@ -402,8 +486,8 @@ def load_weekly_history(
         "Average Week"
     ] = average_week
 
-    history.attrs["summary"] = (
-        history_summary
-    )
+    history.attrs[
+        "summary"
+    ] = history_summary
 
     return history
