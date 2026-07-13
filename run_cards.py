@@ -1,10 +1,9 @@
-"""Strava-style run cards for PeakMetrics."""
+"""PeakMetrics Excel activity cards."""
 
-from openpyxl.worksheet.datavalidation import DataValidation
-
+from copy import copy
 from datetime import datetime
-import math
 
+import pandas as pd
 from openpyxl.styles import (
     Alignment,
     Border,
@@ -12,76 +11,10 @@ from openpyxl.styles import (
     PatternFill,
     Side,
 )
-from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 
+from config import CONFIG
 
-CARD_FILL = PatternFill(
-    fill_type="solid",
-    fgColor="F8FAFC",
-)
-
-TITLE_FILL = PatternFill(
-    fill_type="solid",
-    fgColor="EAF2FF",
-)
-
-LAP_TITLE_FILL = PatternFill(
-    fill_type="solid",
-    fgColor="E8EEF5",
-)
-
-LAP_HEADER_FILL = PatternFill(
-    fill_type="solid",
-    fgColor="F0F4F8",
-)
-
-THIN_GRAY = Side(
-    style="thin",
-    color="D9E2EC",
-)
-
-CARD_BORDER = Border(
-    left=THIN_GRAY,
-    right=THIN_GRAY,
-    top=THIN_GRAY,
-    bottom=THIN_GRAY,
-)
-
-
-RUN_TYPE_STYLES = {
-    "Easy Run": {
-        "fill": "EAF4FC",
-        "text": "1F4E78",
-    },
-    "Long Run": {
-        "fill": "E2F0D9",
-        "text": "375623",
-    },
-    "Workout": {
-        "fill": "FCE4D6",
-        "text": "9C0006",
-    },
-    "Strides": {
-        "fill": "FFF2CC",
-        "text": "7F6000",
-    },
-    "Cross Training": {
-        "fill": "E4DFEC",
-        "text": "5F497A",
-    },
-    "Core": {
-        "fill": "DDEBF7",
-        "text": "1F4E78",
-    },
-    "Lifting": {
-        "fill": "D9EAD3",
-        "text": "274E13",
-    },
-    "Other": {
-        "fill": "E7E6E6",
-        "text": "595959",
-    },
-}
 
 ACTIVITY_TYPES = [
     "Easy Run",
@@ -94,219 +27,451 @@ ACTIVITY_TYPES = [
     "Other",
 ]
 
-def get_run_type_style(run_type):
-    """Return the header colors for an activity category."""
 
-    style = RUN_TYPE_STYLES.get(
-        run_type,
-        RUN_TYPE_STYLES["Other"],
-    )
+# PeakMetrics brand colors.
+PEAK_NAVY = "12304A"
+PEAK_TEAL = "169C9C"
+PEAK_AQUA = "63D6D0"
 
-    fill = PatternFill(
-        fill_type="solid",
-        fgColor=style["fill"],
-    )
+DARK_TEXT = "102A43"
+SECONDARY_TEXT = "486581"
+LIGHT_TEXT = "829AB1"
 
-    return fill, style["text"]
+WHITE = "FFFFFF"
+CARD_BACKGROUND = "FFFFFF"
+METRIC_BACKGROUND = "F5FAFA"
+TABLE_HEADER = "DDEFF0"
+ALTERNATE_ROW = "F7FAFC"
+
+BORDER_COLOR = "D9E2EC"
 
 
-def friendly_date(value):
-    """Convert an ISO date into a readable date."""
+RUN_TYPE_STYLES = {
+    "Easy Run": {
+        "accent": "169C9C",
+        "soft": "E8F7F5",
+    },
+    "Long Run": {
+        "accent": "12304A",
+        "soft": "EAF0F5",
+    },
+    "Workout": {
+        "accent": "D58B17",
+        "soft": "FCF4E5",
+    },
+    "Strides": {
+        "accent": "7257A8",
+        "soft": "F1ECF8",
+    },
+    "Cross Training": {
+        "accent": "2878B5",
+        "soft": "EAF3FA",
+    },
+    "Core": {
+        "accent": "4B7F52",
+        "soft": "EDF5EE",
+    },
+    "Lifting": {
+        "accent": "5B667A",
+        "soft": "EEF0F3",
+    },
+    "Other": {
+        "accent": "6B7280",
+        "soft": "F2F4F7",
+    },
+}
 
-    try:
-        date = datetime.fromisoformat(str(value))
-        return date.strftime("%A, %B %d")
-    except ValueError:
-        return str(value)
+
+THIN_SIDE = Side(
+    style="thin",
+    color=BORDER_COLOR,
+)
+
+MEDIUM_SIDE = Side(
+    style="medium",
+    color=BORDER_COLOR,
+)
+
+NO_SIDE = Side(
+    style=None,
+)
+
+METRIC_BORDER = Border(
+    left=THIN_SIDE,
+    right=THIN_SIDE,
+    top=THIN_SIDE,
+    bottom=THIN_SIDE,
+)
 
 
 def is_missing(value):
-    """Check whether a metric is missing."""
+    """Return True for blank, None, or NaN values."""
 
     if value is None:
         return True
 
+    if isinstance(
+        value,
+        (
+            list,
+            tuple,
+            dict,
+        ),
+    ):
+        return False
+
     try:
-        return math.isnan(float(value))
-    except (TypeError, ValueError):
+        return bool(
+            pd.isna(value)
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
         return False
 
 
-def format_number(value, suffix="", decimals=0):
-    """Format a numeric metric safely."""
+def numeric_text(
+    value,
+    suffix="",
+    decimals=0,
+):
+    """Format a numeric metric with its unit."""
 
     if is_missing(value):
         return "—"
 
-    number = float(value)
+    try:
+        number = float(value)
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return str(value)
 
     if decimals == 0:
-        text = f"{number:.0f}"
+        body = f"{number:,.0f}"
     else:
-        text = f"{number:.{decimals}f}"
+        body = f"{number:,.{decimals}f}"
 
     if suffix:
-        return f"{text} {suffix}"
+        return f"{body} {suffix}"
 
-    return text
+    return body
 
 
-def format_text(value):
-    """Format a text metric safely."""
+def text_value(value):
+    """Return readable text for an optional value."""
 
-    if value is None or str(value).strip() == "":
+    if is_missing(value):
         return "—"
 
-    return str(value)
+    value = str(value).strip()
+
+    if not value:
+        return "—"
+
+    return value
 
 
-def add_metric(
+def activity_heading(run):
+    """Create the activity date and start-time heading."""
+
+    start_time = run.get(
+        "Start Time"
+    )
+
+    if (
+        start_time is not None
+        and hasattr(
+            start_time,
+            "strftime",
+        )
+    ):
+        day_text = start_time.strftime(
+            "%A, %B"
+        )
+
+        time_text = (
+            start_time.strftime(
+                "%I:%M %p"
+            )
+            .lstrip("0")
+        )
+
+        return (
+            f"{day_text} "
+            f"{start_time.day}  •  "
+            f"{time_text}"
+        )
+
+    date_value = run.get(
+        "Date",
+        "",
+    )
+
+    time_value = run.get(
+        "Time of Day",
+        "",
+    )
+
+    try:
+        parsed_date = datetime.fromisoformat(
+            str(date_value)
+        )
+
+        date_text = (
+            f"{parsed_date.strftime('%A, %B')} "
+            f"{parsed_date.day}"
+        )
+
+    except ValueError:
+        date_text = str(
+            date_value
+        )
+
+    if time_value:
+        return (
+            f"{date_text}  •  "
+            f"{time_value}"
+        )
+
+    return date_text
+
+
+def format_pace(value):
+    """Format pace without duplicating the unit."""
+
+    value = text_value(
+        value
+    )
+
+    if value == "—":
+        return value
+
+    return value.replace(
+        "/mi",
+        "",
+    )
+
+
+def style_range(
+    ws,
+    start_row,
+    end_row,
+    start_column,
+    end_column,
+    fill=None,
+    border=None,
+):
+    """Apply shared styling across a cell range."""
+
+    for row_number in range(
+        start_row,
+        end_row + 1,
+    ):
+        for column_number in range(
+            start_column,
+            end_column + 1,
+        ):
+            cell = ws.cell(
+                row=row_number,
+                column=column_number,
+            )
+
+            if fill is not None:
+                cell.fill = fill
+
+            if border is not None:
+                cell.border = border
+
+
+def prepare_card_background(
+    ws,
+    start_row,
+    end_row,
+):
+    """Create the clean outlined card background."""
+
+    background_fill = PatternFill(
+        fill_type="solid",
+        fgColor=CARD_BACKGROUND,
+    )
+
+    for row_number in range(
+        start_row,
+        end_row + 1,
+    ):
+        for column_number in range(
+            1,
+            17,
+        ):
+            cell = ws.cell(
+                row=row_number,
+                column=column_number,
+            )
+
+            cell.fill = background_fill
+
+            cell.border = Border(
+                left=(
+                    THIN_SIDE
+                    if column_number == 1
+                    else NO_SIDE
+                ),
+                right=(
+                    THIN_SIDE
+                    if column_number == 16
+                    else NO_SIDE
+                ),
+                top=(
+                    THIN_SIDE
+                    if row_number == start_row
+                    else NO_SIDE
+                ),
+                bottom=(
+                    MEDIUM_SIDE
+                    if row_number == end_row
+                    else NO_SIDE
+                ),
+            )
+
+
+def draw_metric_tile(
     ws,
     value_row,
     label_row,
-    start_col,
-    end_col,
+    start_column,
     value,
     label,
 ):
-    """Add one metric to the left side of a run card."""
+    """Draw one compact activity metric."""
+
+    end_column = start_column + 1
 
     ws.merge_cells(
         start_row=value_row,
-        start_column=start_col,
+        start_column=start_column,
         end_row=value_row,
-        end_column=end_col,
+        end_column=end_column,
     )
 
     ws.merge_cells(
         start_row=label_row,
-        start_column=start_col,
+        start_column=start_column,
         end_row=label_row,
-        end_column=end_col,
+        end_column=end_column,
     )
 
-    value_cell = ws.cell(value_row, start_col)
+    style_range(
+        ws,
+        value_row,
+        label_row,
+        start_column,
+        end_column,
+        fill=PatternFill(
+            fill_type="solid",
+            fgColor=METRIC_BACKGROUND,
+        ),
+        border=METRIC_BORDER,
+    )
+
+    value_cell = ws.cell(
+        row=value_row,
+        column=start_column,
+    )
+
     value_cell.value = value
     value_cell.font = Font(
-        size=14,
+        name="Arial",
+        size=11,
         bold=True,
-        color="1F2937",
+        color=DARK_TEXT,
     )
     value_cell.alignment = Alignment(
         horizontal="center",
         vertical="center",
+        wrap_text=True,
     )
 
-    label_cell = ws.cell(label_row, start_col)
+    label_cell = ws.cell(
+        row=label_row,
+        column=start_column,
+    )
+
     label_cell.value = label
     label_cell.font = Font(
-        size=9,
-        color="667085",
+        name="Arial",
+        size=8,
+        color=SECONDARY_TEXT,
     )
     label_cell.alignment = Alignment(
         horizontal="center",
         vertical="center",
+        wrap_text=True,
     )
 
 
-def merge_lap_cell(
+def merge_lap_cells(
     ws,
-    row,
-    start_col,
-    end_col,
+    row_number,
+    start_column,
+    end_column,
     value,
-    bold=False,
+    fill,
+    font,
 ):
-    """Create one cell in the lap-splits table."""
+    """Create one merged lap-table cell."""
 
-    ws.merge_cells(
-        start_row=row,
-        start_column=start_col,
-        end_row=row,
-        end_column=end_col,
+    if start_column != end_column:
+        ws.merge_cells(
+            start_row=row_number,
+            start_column=start_column,
+            end_row=row_number,
+            end_column=end_column,
+        )
+
+    style_range(
+        ws,
+        row_number,
+        row_number,
+        start_column,
+        end_column,
+        fill=fill,
+        border=METRIC_BORDER,
     )
 
-    cell = ws.cell(row, start_col)
+    cell = ws.cell(
+        row=row_number,
+        column=start_column,
+    )
+
     cell.value = value
-    cell.font = Font(
-        size=9,
-        bold=bold,
-        color="344054",
-    )
+    cell.font = font
     cell.alignment = Alignment(
         horizontal="center",
         vertical="center",
     )
 
 
-def draw_run_card(
+def draw_lap_table(
     ws,
-    start_row,
     run,
-    activity_type_validation,
+    start_row,
 ):
-    """Draw one activity card and return its ending row."""
+    """Draw the activity lap-splits table."""
 
-    laps = run.get("Laps") or []
+    laps = run.get(
+        "Laps"
+    ) or []
 
-    # Seven rows are needed for the standard metrics.
-    # Longer lap lists automatically make the card taller.
-    end_row = max(
-        start_row + 6,
-        start_row + 3 + len(laps),
+    header_fill = PatternFill(
+        fill_type="solid",
+        fgColor=TABLE_HEADER,
     )
 
-    # Date and AM/PM on the left.
-    ws.merge_cells(
-        start_row=start_row,
-        start_column=1,
-        end_row=start_row,
-        end_column=8,
-    )
-
-    # Run type on the right.
-    ws.merge_cells(
-        start_row=start_row,
-        start_column=9,
-        end_row=start_row,
-        end_column=16,
-    )
-
-    # Left-side metric blocks.
-    metric_columns = [
-        (1, 2),
-        (3, 4),
-        (5, 6),
-        (7, 8),
-    ]
-
-    for start_col, end_col in metric_columns:
-        ws.merge_cells(
-            start_row=start_row + 2,
-            start_column=start_col,
-            end_row=start_row + 2,
-            end_column=end_col,
-        )
-        ws.merge_cells(
-            start_row=start_row + 3,
-            start_column=start_col,
-            end_row=start_row + 3,
-            end_column=end_col,
-        )
-        ws.merge_cells(
-            start_row=start_row + 5,
-            start_column=start_col,
-            end_row=start_row + 5,
-            end_column=end_col,
-        )
-        ws.merge_cells(
-            start_row=start_row + 6,
-            start_column=start_col,
-            end_row=start_row + 6,
-            end_column=end_col,
-        )
-
-    # Lap title.
     ws.merge_cells(
         start_row=start_row + 2,
         start_column=9,
@@ -314,383 +479,723 @@ def draw_run_card(
         end_column=16,
     )
 
-    # Lap column headings.
-    lap_columns = [
-        (9, 10),
-        (11, 12),
-        (13, 14),
-        (15, 16),
-    ]
+    style_range(
+        ws,
+        start_row + 2,
+        start_row + 2,
+        9,
+        16,
+        fill=header_fill,
+        border=METRIC_BORDER,
+    )
 
-    for start_col, end_col in lap_columns:
-        ws.merge_cells(
-            start_row=start_row + 3,
-            start_column=start_col,
-            end_row=start_row + 3,
-            end_column=end_col,
-        )
+    lap_title = ws.cell(
+        row=start_row + 2,
+        column=9,
+    )
 
-    # Create the lap rows.
-    if laps:
-        for offset, lap in enumerate(laps, start=4):
-            lap_row = start_row + offset
+    lap_title.value = "Lap Splits"
+    lap_title.font = Font(
+        name="Arial",
+        size=10,
+        bold=True,
+        color=PEAK_NAVY,
+    )
+    lap_title.alignment = Alignment(
+        horizontal="left",
+        vertical="center",
+    )
 
-            for start_col, end_col in lap_columns:
-                ws.merge_cells(
-                    start_row=lap_row,
-                    start_column=start_col,
-                    end_row=lap_row,
-                    end_column=end_col,
-                )
-    else:
+    column_font = Font(
+        name="Arial",
+        size=9,
+        bold=True,
+        color=SECONDARY_TEXT,
+    )
+
+    merge_lap_cells(
+        ws,
+        start_row + 3,
+        9,
+        9,
+        "Lap",
+        header_fill,
+        column_font,
+    )
+
+    merge_lap_cells(
+        ws,
+        start_row + 3,
+        10,
+        11,
+        "Distance",
+        header_fill,
+        column_font,
+    )
+
+    merge_lap_cells(
+        ws,
+        start_row + 3,
+        12,
+        13,
+        "Pace",
+        header_fill,
+        column_font,
+    )
+
+    merge_lap_cells(
+        ws,
+        start_row + 3,
+        14,
+        15,
+        "Time",
+        header_fill,
+        column_font,
+    )
+
+    merge_lap_cells(
+        ws,
+        start_row + 3,
+        16,
+        16,
+        "Avg HR",
+        header_fill,
+        column_font,
+    )
+
+    if not laps:
         ws.merge_cells(
             start_row=start_row + 4,
             start_column=9,
-            end_row=start_row + 4,
+            end_row=start_row + 5,
             end_column=16,
         )
 
-    # Base styling for the complete card.
-    for row in range(start_row, end_row + 1):
-        for column in range(1, 17):
-            cell = ws.cell(row, column)
-            cell.fill = CARD_FILL
-            cell.border = CARD_BORDER
-
-    # Header styling based on activity type.
-    run_type = str(
-        run.get("Run Type") or "Other"
-    )
-
-    header_fill, header_text_color = (
-        get_run_type_style(run_type)
-    )
-
-    for column in range(1, 17):
-        ws.cell(
-            start_row,
-            column,
-        ).fill = header_fill
-
-    left_title = ws.cell(start_row, 1)
-    left_title.value = (
-        f"{friendly_date(run['Date'])}"
-        f"  •  {run.get('Time of Day', '')}"
-    )
-    left_title.font = Font(
-        size=13,
-        bold=True,
-        color="1F2937",
-    )
-    left_title.alignment = Alignment(
-        horizontal="left",
-        vertical="center",
-        indent=1,
-    )
-
-    right_title = ws.cell(start_row, 9)
-    right_title.value = run.get(
-        "Run Type",
-        "Run",
-    )
-    right_title.font = Font(
-        size=13,
-        bold=True,
-        color="1F2937",
-    )
-    right_title.alignment = Alignment(
-        horizontal="right",
-        vertical="center",
-        indent=1,
-    )
-    activity_type_validation.add(
-    right_title
-)
-
-    # Main run metrics.
-    add_metric(
-        ws,
-        start_row + 2,
-        start_row + 3,
-        1,
-        2,
-        format_number(
-            run.get("Miles"),
-            "mi",
-            decimals=2,
-        ),
-        "Distance",
-    )
-
-    add_metric(
-        ws,
-        start_row + 2,
-        start_row + 3,
-        3,
-        4,
-        format_text(run.get("Time")),
-        "Time",
-    )
-
-    add_metric(
-        ws,
-        start_row + 2,
-        start_row + 3,
-        5,
-        6,
-        format_text(run.get("Pace (/mi)")),
-        "Average Pace",
-    )
-
-    add_metric(
-        ws,
-        start_row + 2,
-        start_row + 3,
-        7,
-        8,
-        format_number(
-            run.get("Avg HR"),
-            "bpm",
-        ),
-        "Average HR",
-    )
-
-    add_metric(
-        ws,
-        start_row + 5,
-        start_row + 6,
-        1,
-        2,
-        format_number(
-            run.get("Elevation (ft)"),
-            "ft",
-        ),
-        "Elevation",
-    )
-
-    add_metric(
-        ws,
-        start_row + 5,
-        start_row + 6,
-        3,
-        4,
-        format_number(
-            run.get("Power (W)"),
-            "W",
-        ),
-        "Average Power",
-    )
-
-    add_metric(
-        ws,
-        start_row + 5,
-        start_row + 6,
-        5,
-        6,
-        format_number(
-            run.get("Max HR"),
-            "bpm",
-        ),
-        "Maximum HR",
-    )
-
-    add_metric(
-        ws,
-        start_row + 5,
-        start_row + 6,
-        7,
-        8,
-        format_number(
-            run.get("Cadence (spm)"),
-            "spm",
-        ),
-        "Cadence",
-    )
-
-    # Lap-splits panel.
-    lap_title = ws.cell(start_row + 2, 9)
-    lap_title.value = "Lap Splits"
-    lap_title.fill = LAP_TITLE_FILL
-    lap_title.font = Font(
-        size=11,
-        bold=True,
-        color="344054",
-    )
-    lap_title.alignment = Alignment(
-        horizontal="center",
-        vertical="center",
-    )
-
-    lap_headings = [
-        ("Lap", 9, 10),
-        ("Distance", 11, 12),
-        ("Pace", 13, 14),
-        ("Avg HR", 15, 16),
-    ]
-
-    for heading, start_col, end_col in lap_headings:
-        cell = ws.cell(start_row + 3, start_col)
-        cell.value = heading
-        cell.fill = LAP_HEADER_FILL
-        cell.font = Font(
-            size=9,
-            bold=True,
-            color="475467",
-        )
-        cell.alignment = Alignment(
-            horizontal="center",
-            vertical="center",
+        style_range(
+            ws,
+            start_row + 4,
+            start_row + 5,
+            9,
+            16,
+            fill=PatternFill(
+                fill_type="solid",
+                fgColor=WHITE,
+            ),
+            border=METRIC_BORDER,
         )
 
-        for column in range(start_col, end_col + 1):
-            ws.cell(
-                start_row + 3,
-                column,
-            ).fill = LAP_HEADER_FILL
+        empty_cell = ws.cell(
+            row=start_row + 4,
+            column=9,
+        )
 
-    if laps:
-        for lap_index, lap in enumerate(laps):
-            lap_row = start_row + 4 + lap_index
-
-            merge_lap_cell(
-                ws,
-                lap_row,
-                9,
-                10,
-                lap.get("Lap", lap_index + 1),
-                bold=True,
-            )
-
-            merge_lap_cell(
-                ws,
-                lap_row,
-                11,
-                12,
-                format_number(
-                    lap.get("Miles"),
-                    "mi",
-                    decimals=2,
-                ),
-            )
-
-            merge_lap_cell(
-                ws,
-                lap_row,
-                13,
-                14,
-                format_text(lap.get("Pace")),
-            )
-
-            merge_lap_cell(
-                ws,
-                lap_row,
-                15,
-                16,
-                format_number(
-                    lap.get("Avg HR"),
-                    "bpm",
-                ),
-            )
-
-            ws.row_dimensions[lap_row].height = 20
-    else:
-        no_laps = ws.cell(start_row + 4, 9)
-        no_laps.value = "No lap data found"
-        no_laps.font = Font(
+        empty_cell.value = (
+            "No lap data available"
+        )
+        empty_cell.font = Font(
+            name="Arial",
             size=9,
             italic=True,
-            color="98A2B3",
+            color=LIGHT_TEXT,
         )
-        no_laps.alignment = Alignment(
+        empty_cell.alignment = Alignment(
             horizontal="center",
             vertical="center",
         )
 
-    ws.row_dimensions[start_row].height = 28
-    ws.row_dimensions[start_row + 1].height = 8
-    ws.row_dimensions[start_row + 2].height = 25
-    ws.row_dimensions[start_row + 3].height = 21
-    ws.row_dimensions[start_row + 5].height = 25
+        return
+
+    data_font = Font(
+        name="Arial",
+        size=9,
+        color=DARK_TEXT,
+    )
+
+    bold_data_font = Font(
+        name="Arial",
+        size=9,
+        bold=True,
+        color=DARK_TEXT,
+    )
+
+    for lap_index, lap in enumerate(
+        laps,
+        start=1,
+    ):
+        row_number = (
+            start_row
+            + 3
+            + lap_index
+        )
+
+        row_fill = PatternFill(
+            fill_type="solid",
+            fgColor=(
+                ALTERNATE_ROW
+                if lap_index % 2 == 0
+                else WHITE
+            ),
+        )
+
+        lap_number = lap.get(
+            "Lap",
+            lap_index,
+        )
+
+        lap_miles = numeric_text(
+            lap.get(
+                "Miles"
+            ),
+            "mi",
+            decimals=2,
+        )
+
+        lap_pace = format_pace(
+            lap.get(
+                "Pace"
+            )
+        )
+
+        lap_time = text_value(
+            lap.get(
+                "Time"
+            )
+        )
+
+        lap_hr = numeric_text(
+            lap.get(
+                "Avg HR"
+            ),
+            "bpm",
+        )
+
+        merge_lap_cells(
+            ws,
+            row_number,
+            9,
+            9,
+            lap_number,
+            row_fill,
+            bold_data_font,
+        )
+
+        merge_lap_cells(
+            ws,
+            row_number,
+            10,
+            11,
+            lap_miles,
+            row_fill,
+            data_font,
+        )
+
+        merge_lap_cells(
+            ws,
+            row_number,
+            12,
+            13,
+            lap_pace,
+            row_fill,
+            data_font,
+        )
+
+        merge_lap_cells(
+            ws,
+            row_number,
+            14,
+            15,
+            lap_time,
+            row_fill,
+            data_font,
+        )
+
+        merge_lap_cells(
+            ws,
+            row_number,
+            16,
+            16,
+            lap_hr,
+            row_fill,
+            data_font,
+        )
+
+        ws.row_dimensions[
+            row_number
+        ].height = 21
+
+
+def draw_activity_card(
+    ws,
+    run,
+    start_row,
+    type_validation,
+):
+    """Draw one complete PeakMetrics activity card."""
+
+    laps = run.get(
+        "Laps"
+    ) or []
+
+    end_row = max(
+        start_row + 6,
+        start_row + 3 + len(laps),
+    )
+
+    prepare_card_background(
+        ws,
+        start_row,
+        end_row,
+    )
+
+    run_type = text_value(
+        run.get(
+            "Run Type",
+            "Other",
+        )
+    )
+
+    if run_type not in ACTIVITY_TYPES:
+        run_type = "Other"
+
+    run_style = RUN_TYPE_STYLES.get(
+        run_type,
+        RUN_TYPE_STYLES["Other"],
+    )
+
+    accent_fill = PatternFill(
+        fill_type="solid",
+        fgColor=run_style["accent"],
+    )
+
+    soft_fill = PatternFill(
+        fill_type="solid",
+        fgColor=run_style["soft"],
+    )
+
+    ws.merge_cells(
+        start_row=start_row,
+        start_column=1,
+        end_row=start_row,
+        end_column=8,
+    )
+
+    ws.merge_cells(
+        start_row=start_row,
+        start_column=9,
+        end_row=start_row,
+        end_column=16,
+    )
+
+    style_range(
+        ws,
+        start_row,
+        start_row,
+        1,
+        16,
+        fill=accent_fill,
+        border=Border(
+            top=Side(
+                style="medium",
+                color=run_style["accent"],
+            ),
+            bottom=Side(
+                style="medium",
+                color=run_style["accent"],
+            ),
+        ),
+    )
+
+    heading_cell = ws.cell(
+        row=start_row,
+        column=1,
+    )
+
+    heading_cell.value = activity_heading(
+        run
+    )
+    heading_cell.font = Font(
+        name="Arial",
+        size=11,
+        bold=True,
+        color=WHITE,
+    )
+    heading_cell.alignment = Alignment(
+        horizontal="left",
+        vertical="center",
+    )
+
+    type_cell = ws.cell(
+        row=start_row,
+        column=9,
+    )
+
+    type_cell.value = run_type
+    type_cell.font = Font(
+        name="Arial",
+        size=10,
+        bold=True,
+        color=WHITE,
+    )
+    type_cell.alignment = Alignment(
+        horizontal="right",
+        vertical="center",
+    )
+
+    type_validation.add(
+        type_cell
+    )
+
+    ws.row_dimensions[
+        start_row
+    ].height = 27
+
+    style_range(
+        ws,
+        start_row + 1,
+        start_row + 1,
+        1,
+        16,
+        fill=soft_fill,
+        border=Border(
+            bottom=THIN_SIDE,
+        ),
+    )
+
+    ws.row_dimensions[
+        start_row + 1
+    ].height = 5
+
+    metrics = [
+        (
+            numeric_text(
+                run.get("Miles"),
+                "mi",
+                decimals=2,
+            ),
+            "Distance",
+        ),
+        (
+            text_value(
+                run.get("Time")
+            ),
+            "Time",
+        ),
+        (
+            format_pace(
+                run.get(
+                    "Pace (/mi)"
+                )
+            ),
+            "Average Pace",
+        ),
+        (
+            numeric_text(
+                run.get("Avg HR"),
+                "bpm",
+            ),
+            "Average HR",
+        ),
+        (
+            numeric_text(
+                run.get(
+                    "Elevation (ft)"
+                ),
+                "ft",
+            ),
+            "Elevation Gain",
+        ),
+        (
+            numeric_text(
+                run.get("Power (W)"),
+                "W",
+            ),
+            "Average Power",
+        ),
+        (
+            numeric_text(
+                run.get("Max HR"),
+                "bpm",
+            ),
+            "Maximum HR",
+        ),
+        (
+            numeric_text(
+                run.get(
+                    "Cadence (spm)"
+                ),
+                "spm",
+            ),
+            "Cadence",
+        ),
+    ]
+
+    metric_columns = [
+        1,
+        3,
+        5,
+        7,
+    ]
+
+    for index, (
+        value,
+        label,
+    ) in enumerate(
+        metrics[:4]
+    ):
+        draw_metric_tile(
+            ws,
+            start_row + 2,
+            start_row + 3,
+            metric_columns[index],
+            value,
+            label,
+        )
+
+    for index, (
+        value,
+        label,
+    ) in enumerate(
+        metrics[4:]
+    ):
+        draw_metric_tile(
+            ws,
+            start_row + 4,
+            start_row + 5,
+            metric_columns[index],
+            value,
+            label,
+        )
+
+    ws.row_dimensions[
+        start_row + 2
+    ].height = 24
+
+    ws.row_dimensions[
+        start_row + 3
+    ].height = 18
+
+    ws.row_dimensions[
+        start_row + 4
+    ].height = 24
+
+    ws.row_dimensions[
+        start_row + 5
+    ].height = 18
+
+    draw_lap_table(
+        ws,
+        run,
+        start_row,
+    )
+
+    for row_number in range(
+        start_row + 6,
+        end_row + 1,
+    ):
+        if (
+            ws.row_dimensions[
+                row_number
+            ].height
+            is None
+        ):
+            ws.row_dimensions[
+                row_number
+            ].height = 21
 
     return end_row
 
 
-def create_report_sheet(wb, df):
-    """Create the chronological run-card report."""
+def apply_report_font(
+    ws,
+    final_row,
+):
+    """Set every visible Report-sheet font to Arial."""
 
-    ws = wb.create_sheet("Report")
+    for row in ws.iter_rows(
+        min_row=1,
+        max_row=final_row,
+        min_col=1,
+        max_col=16,
+    ):
+        for cell in row:
+            if cell.value is None:
+                continue
+
+            updated_font = copy(
+                cell.font
+            )
+
+            updated_font.name = "Arial"
+            cell.font = updated_font
+
+
+def create_report_sheet(
+    wb,
+    df,
+):
+    """Create the branded chronological activity report."""
+
+    ws = wb.create_sheet(
+        "Report"
+    )
+
     ws.sheet_view.showGridLines = False
-    ws.sheet_view.zoomScale = 85
+    ws.sheet_view.zoomScale = 80
+    ws.freeze_panes = None
+    ws.sheet_properties.tabColor = PEAK_NAVY
 
-    activity_type_validation = DataValidation(
-        type="list",
-        formula1=(
-            f'"{",".join(ACTIVITY_TYPES)}"'
-        ),
-        allow_blank=False,
+    ws.page_setup.orientation = (
+        "landscape"
+    )
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+
+    ws.page_margins.left = 0.25
+    ws.page_margins.right = 0.25
+    ws.page_margins.top = 0.4
+    ws.page_margins.bottom = 0.4
+
+    ws.merge_cells(
+        "A1:P1"
     )
 
-    activity_type_validation.promptTitle = (
-        "Activity Type"
-    )
-
-    activity_type_validation.prompt = (
-        "Choose the correct activity category."
-    )
-
-    activity_type_validation.errorTitle = (
-        "Invalid Activity Type"
-    )
-
-    activity_type_validation.error = (
-        "Choose an activity type from the dropdown."
-    )
-
-    activity_type_validation.showInputMessage = True
-    activity_type_validation.showErrorMessage = True
-
-    ws.add_data_validation(activity_type_validation)
-
-    ws.merge_cells("A1:P1")
-    ws["A1"] = "Weekly Runs"
+    ws["A1"] = "Weekly Activities"
     ws["A1"].font = Font(
+        name="Arial",
         size=24,
         bold=True,
+        color=PEAK_NAVY,
     )
     ws["A1"].alignment = Alignment(
         vertical="center",
     )
+
     ws.row_dimensions[1].height = 34
 
-    ws.merge_cells("A2:P2")
-    ws["A2"] = f"{len(df)} activities"
-    ws["A2"].font = Font(
-        size=11,
-        color="667085",
+    ws.merge_cells(
+        "A2:P2"
     )
 
-    # Main metrics area.
-    for column in range(1, 9):
-        ws.column_dimensions[get_column_letter(column)].width = 10
+    ws["A2"] = (
+        f"{CONFIG.athlete_name}  •  "
+        f"{CONFIG.team}  •  "
+        f"{len(df)} activities"
+    )
+    ws["A2"].font = Font(
+        name="Arial",
+        size=10,
+        color=SECONDARY_TEXT,
+    )
+    ws["A2"].alignment = Alignment(
+        vertical="center",
+    )
 
-    # Lap-splits area.
-    for column in range(9, 17):
-        ws.column_dimensions[get_column_letter(column)].width = 8
+    ws.row_dimensions[2].height = 21
+
+    ws.merge_cells(
+        "A3:P3"
+    )
+
+    style_range(
+        ws,
+        3,
+        3,
+        1,
+        16,
+        fill=PatternFill(
+            fill_type="solid",
+            fgColor=PEAK_TEAL,
+        ),
+    )
+
+    ws.row_dimensions[3].height = 4
+
+    type_validation = DataValidation(
+        type="list",
+        formula1=(
+            '"'
+            + ",".join(
+                ACTIVITY_TYPES
+            )
+            + '"'
+        ),
+        allow_blank=False,
+    )
+
+    type_validation.showInputMessage = False
+    type_validation.showErrorMessage = True
+    type_validation.errorTitle = (
+        "Invalid activity type"
+    )
+    type_validation.error = (
+        "Choose an activity type from "
+        "the dropdown list."
+    )
+
+    ws.add_data_validation(
+        type_validation
+    )
 
     start_row = 4
 
-    for run in df.to_dict("records"):
-        end_row = draw_run_card(
+    for run in df.to_dict(
+        "records"
+    ):
+        end_row = draw_activity_card(
             ws,
-            start_row,
             run,
-            activity_type_validation,
+            start_row,
+            type_validation,
         )
+
         start_row = end_row + 3
 
-    ws.freeze_panes = "A4"
+    column_widths = {
+        "A": 10,
+        "B": 10,
+        "C": 10,
+        "D": 10,
+        "E": 10,
+        "F": 10,
+        "G": 10,
+        "H": 10,
+        "I": 7,
+        "J": 8,
+        "K": 8,
+        "L": 8,
+        "M": 8,
+        "N": 8,
+        "O": 8,
+        "P": 11,
+    }
 
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    for (
+        column_letter,
+        width,
+    ) in column_widths.items():
+        ws.column_dimensions[
+            column_letter
+        ].width = width
+
+    final_row = max(
+        3,
+        start_row - 3,
+    )
+
+    apply_report_font(
+        ws,
+        final_row,
+    )
+
+    ws.print_title_rows = "1:3"
+    ws.print_area = (
+        f"A1:P{final_row}"
+    )
+
+    ws.sheet_view.selection[
+        0
+    ].activeCell = "A1"
+
+    ws.sheet_view.selection[
+        0
+    ].sqref = "A1"
