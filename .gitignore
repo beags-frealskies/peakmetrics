@@ -1,18 +1,23 @@
 # Python
-__pycache__/
-*.pyc
-
-# Virtual environment
 .venv/
+__pycache__/
+*.py[cod]
 
-# Generated reports
-Reports/
+# Editors and operating system files
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Personal athlete configuration
+config.json
 
 # Personal training data
-Weekly Runs/
+Weekly Runs/*
+Reports/*
+Data/*
+activity_overrides.json
 
-# VS Code settings
-.vscode/
-
-# macOS
-.DS_Store
+# Preserve empty project folders
+!Weekly Runs/.gitkeep
+!Reports/.gitkeep
+!Data/.gitkeep

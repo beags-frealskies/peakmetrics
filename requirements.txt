@@ -1,0 +1,7 @@
+fitdecode
+matplotlib
+openpyxl
+pandas
+pillow
+reportlab
+tzdata
