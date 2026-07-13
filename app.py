@@ -3,6 +3,7 @@
 from datetime import timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from config import CONFIG
 
 import pandas as pd
 
@@ -32,7 +33,9 @@ from run_classifier import (
 from training_history import save_training_history
 
 
-LOCAL_TIMEZONE = ZoneInfo("America/Denver")
+LOCAL_TIMEZONE = ZoneInfo(
+    CONFIG.timezone
+)
 
 
 def convert_to_local_time(start_time):

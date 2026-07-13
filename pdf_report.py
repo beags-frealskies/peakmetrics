@@ -4,6 +4,7 @@ from datetime import datetime
 from html import escape
 import math
 from pathlib import Path
+from config import CONFIG
 
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.shapes import Drawing
@@ -1310,9 +1311,9 @@ def create_pdf_report(
         Spacer(1, 8),
         Paragraph(
             (
-                "<b>Athlete:</b> Brady Eagar"
+                "<b>Athlete:</b> CONFIG.athlete_name"
                 " &nbsp;&nbsp;&nbsp; "
-                "<b>Team:</b> Utah Tech XC"
+                "<b>Team:</b> CONFIG.team"
                 " &nbsp;&nbsp;&nbsp; "
                 f"<b>Week:</b> "
                 f"{escape(dates[0])}"
