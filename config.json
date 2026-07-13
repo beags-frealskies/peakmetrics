@@ -1,7 +1,5 @@
-@'
 {
-  "athlete_name": "Brady Eagar",
-  "team": "Utah Tech XC",
-  "timezone": "America/Denver"
+    "athlete_name":  "Brady Eagar",
+    "team":  "Utah Tech XC",
+    "timezone":  "America/Denver"
 }
-'@ | Set-Content .\config.json
