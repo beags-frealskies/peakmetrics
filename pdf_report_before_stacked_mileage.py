@@ -2,9 +2,16 @@
 
 from datetime import datetime
 from html import escape
+from io import BytesIO
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.ticker import MaxNLocator
 from reportlab.lib import colors
 from reportlab.lib.enums import (
     TA_CENTER,
@@ -35,7 +42,6 @@ from reportlab.platypus import (
 )
 
 from config import CONFIG
-from mileage_chart import create_daily_mileage_chart as create_stacked_daily_mileage_chart
 
 
 # PeakMetrics brand palette.
@@ -860,21 +866,240 @@ def create_daily_mileage_chart(
     daily_mileage,
     weekly_total,
 ):
-    """Create the PDF version of the stacked mileage chart."""
+    """Create the branded PDF daily-mileage chart."""
 
-    return create_stacked_daily_mileage_chart(
-        daily_mileage,
-        weekly_total,
-        figsize=(11.2, 3.5),
-        dpi=150,
-        title_font_size=17,
-        subtitle_font_size=9,
-        total_font_size=10,
-        axis_font_size=8,
-        segment_font_size=9,
-        total_label_font_size=9,
-        pad_inches=0.08,
+    day_labels = [
+        format_day_label(
+            value
+        )
+        for value
+        in daily_mileage["Date"]
+    ]
+
+    mileage_values = [
+        float(
+            value
+        )
+        for value
+        in daily_mileage["Miles"]
+    ]
+
+    x_positions = list(
+        range(
+            len(mileage_values)
+        )
     )
+
+    figure, axis = plt.subplots(
+        figsize=(
+            11.2,
+            3.5,
+        ),
+        dpi=150,
+    )
+
+    figure.patch.set_facecolor(
+        "white"
+    )
+
+    axis.set_facecolor(
+        "white"
+    )
+
+    figure.subplots_adjust(
+        left=0.055,
+        right=0.985,
+        top=0.75,
+        bottom=0.23,
+    )
+
+    maximum_mileage = max(
+        mileage_values
+    )
+
+    chart_ceiling = max(
+        5,
+        maximum_mileage * 1.28,
+    )
+
+    axis.set_ylim(
+        0,
+        chart_ceiling,
+    )
+
+    axis.set_axisbelow(
+        True
+    )
+
+    axis.yaxis.set_major_locator(
+        MaxNLocator(
+            nbins=4,
+            integer=True,
+        )
+    )
+
+    axis.grid(
+        axis="y",
+        color=GRID_COLOR,
+        linewidth=0.8,
+    )
+
+    axis.grid(
+        axis="x",
+        visible=False,
+    )
+
+    for spine in axis.spines.values():
+        spine.set_visible(
+            False
+        )
+
+    axis.axhline(
+        0,
+        color="#BCCCDC",
+        linewidth=1.1,
+    )
+
+    bar_colors = [
+        PEAK_TEAL
+        for _ in mileage_values
+    ]
+
+    if bar_colors:
+        bar_colors[-1] = (
+            PEAK_AQUA
+        )
+
+    bars = axis.bar(
+        x_positions,
+        mileage_values,
+        width=0.56,
+        color=bar_colors,
+        edgecolor="none",
+        zorder=3,
+    )
+
+    if len(mileage_values) == 1:
+        axis.set_xlim(
+            -0.8,
+            0.8,
+        )
+
+    else:
+        axis.set_xlim(
+            -0.65,
+            len(mileage_values) - 0.35,
+        )
+
+    axis.set_xticks(
+        x_positions
+    )
+
+    axis.set_xticklabels(
+        day_labels
+    )
+
+    axis.tick_params(
+        axis="x",
+        length=0,
+        pad=10,
+        labelsize=9,
+        colors=SECONDARY_TEXT,
+    )
+
+    axis.tick_params(
+        axis="y",
+        length=0,
+        pad=7,
+        labelsize=8,
+        colors=LIGHT_TEXT,
+    )
+
+    axis.set_ylabel(
+        "Miles",
+        fontsize=8,
+        color=SECONDARY_TEXT,
+        labelpad=8,
+    )
+
+    axis.set_title(
+        "Daily Mileage",
+        loc="left",
+        fontsize=17,
+        fontweight="bold",
+        color=PEAK_NAVY,
+        pad=22,
+    )
+
+    axis.text(
+        0,
+        1.02,
+        "Mileage by training day - doubles combined",
+        transform=axis.transAxes,
+        horizontalalignment="left",
+        verticalalignment="bottom",
+        fontsize=9,
+        color=SECONDARY_TEXT,
+    )
+
+    axis.text(
+        1,
+        1.02,
+        (
+            f"Week total: "
+            f"{weekly_total:.1f} mi"
+        ),
+        transform=axis.transAxes,
+        horizontalalignment="right",
+        verticalalignment="bottom",
+        fontsize=10,
+        fontweight="bold",
+        color=PEAK_TEAL,
+    )
+
+    for bar, mileage in zip(
+        bars,
+        mileage_values,
+    ):
+        axis.annotate(
+            f"{mileage:.1f}",
+            (
+                bar.get_x()
+                + bar.get_width() / 2,
+                bar.get_height(),
+            ),
+            xytext=(
+                0,
+                6,
+            ),
+            textcoords="offset points",
+            horizontalalignment="center",
+            verticalalignment="bottom",
+            fontsize=9,
+            fontweight="bold",
+            color=PEAK_NAVY,
+            clip_on=False,
+        )
+
+    image_buffer = BytesIO()
+
+    figure.savefig(
+        image_buffer,
+        format="png",
+        bbox_inches="tight",
+        pad_inches=0.08,
+        facecolor="white",
+    )
+
+    plt.close(
+        figure
+    )
+
+    image_buffer.seek(
+        0
+    )
+
+    return image_buffer
 
 
 def build_summary_page(
